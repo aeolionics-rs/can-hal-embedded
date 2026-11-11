@@ -1,6 +1,6 @@
 [package]
 name = "nucleo-g431kb"
-description = "Bench tests of can-hal-mcan on ST's NUCLEO-G431KB"
+description = "Bench tests of can-hal-fdcan on ST's NUCLEO-G431KB"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,7 +20,7 @@ bench = false
 
 [dependencies]
 can-hal = { version = "0.4.3", path = "../../can-hal-rs/can-hal", package = "can-hal-rs", default-features = false }
-can-hal-mcan = { path = "../can-hal-mcan", features = ["defmt"] }
+can-hal-fdcan = { path = "../can-hal-fdcan", features = ["defmt"] }
 embassy-stm32 = { version = "0.6.0", features = ["stm32g431kb", "defmt", "memory-x", "time-driver-tim2", "unstable-pac"] }
 embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "executor-thread", "defmt"] }
 embassy-time = { version = "0.5.1", features = ["defmt", "defmt-timestamp-uptime", "tick-hz-1_000_000"] }

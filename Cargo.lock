@@ -93,7 +93,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "can-hal-mcan"
+name = "can-hal-fdcan"
 version = "0.1.0"
 dependencies = [
  "can-hal-rs",
@@ -746,7 +746,7 @@ dependencies = [
 name = "nucleo-g431kb"
 version = "0.1.0"
 dependencies = [
- "can-hal-mcan",
+ "can-hal-fdcan",
  "can-hal-rs",
  "cortex-m",
  "cortex-m-rt",

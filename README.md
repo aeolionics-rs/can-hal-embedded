@@ -12,10 +12,10 @@ checked out beside this repository as `../can-hal-rs`.
 # Crates
 
 - `can-hal-bxcan`: ST's bxCAN (STM32F0, F1, F4 and others), classic CAN.
-- `can-hal-mcan`: ST's FDCAN (STM32G0, G4, H5, U5 and others), classic CAN
-  and CAN FD.
+- `can-hal-fdcan`: ST's FDCAN, the cut-down Bosch M_CAN (STM32G0, G4, H5, U5
+  and others), classic CAN and CAN FD.
 - `nucleo-g431kb`: bench tests of the FDCAN driver on ST's NUCLEO-G431KB
-  (`cargo run-mcan-loopback`; `cargo run-mcan-dar` with a jumper from PA12
+  (`cargo run-fdcan-loopback`; `cargo run-fdcan-dar` with a jumper from PA12
   to PA11).
 
 The crates came from [ferrocan](https://github.com/aeolionics-rs/ferrocan),

@@ -7,7 +7,7 @@
 //! `can_fdcan_v1`, generated from ST's SVD) and its message RAM, whose
 //! layout is fixed. The full Bosch `M_CAN` (the STM32H7, Microchip's parts)
 //! places its message RAM by register instead and numbers some interrupts
-//! differently; it would be a second variant.
+//! differently; it has a driver of its own, `can-hal-mcan`.
 
 use core::cell::UnsafeCell;
 use core::ptr::NonNull;

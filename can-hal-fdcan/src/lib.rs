@@ -2,9 +2,10 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! A [can-hal](can_hal) backend for Bosch's `M_CAN` CAN FD controller, starting
-//! with ST's FDCAN: the cut-down `M_CAN` of the STM32G0, G4, L5, U5 and H5, whose
-//! message RAM has a fixed layout.
+//! A [can-hal](can_hal) backend for ST's FDCAN, the cut-down Bosch `M_CAN` CAN
+//! FD controller of the STM32G0, G4, L5, U5 and H5, whose message RAM has a
+//! fixed layout. The full `M_CAN` (the STM32H7, Microchip's parts) has a
+//! driver of its own, `can-hal-mcan`.
 //!
 //! The channel confirms its transmissions: it implements can-hal's
 //! [`ConfirmedTransmit`] (for [`Frame`] and [`CanFrame`]) and

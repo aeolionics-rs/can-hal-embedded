@@ -31,7 +31,7 @@
 //! unreliable here.
 //!
 //! ```sh
-//! cargo run-mcan-dar
+//! cargo run-fdcan-dar
 //! ```
 
 #![no_std]
@@ -43,7 +43,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use can_hal::{BusStatus, CanFrame, CanId, ConfirmedTransmit, Event, Failure, Outcome, SamplePoint};
-use can_hal_mcan::{BitTiming, Can, Clock, Config, Mode, Peripheral, State};
+use can_hal_fdcan::{BitTiming, Can, Clock, Config, Mode, Peripheral, State};
 use defmt::{Debug2Format, error, info, warn};
 use defmt_rtt as _;
 use embassy_executor::Spawner;

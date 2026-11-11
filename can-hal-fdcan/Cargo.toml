@@ -1,11 +1,11 @@
 [package]
-name = "can-hal-mcan"
-description = "can-hal backend for Bosch M_CAN controllers, starting with ST's FDCAN (STM32G0, G4, L5, U5, H5)"
+name = "can-hal-fdcan"
+description = "can-hal backend for ST's FDCAN, the cut-down Bosch M_CAN of the STM32G0, G4, L5, U5 and H5"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-keywords = ["can", "can-fd", "mcan", "fdcan", "stm32"]
+keywords = ["can", "can-fd", "fdcan", "stm32"]
 categories = ["embedded", "hardware-support", "no-std"]
 publish = false
 

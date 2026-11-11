@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["can-hal-bxcan", "can-hal-mcan", "nucleo-g431kb"]
+members = ["can-hal-bxcan", "can-hal-fdcan", "nucleo-g431kb"]
 
 [workspace.package]
 version = "0.1.0"
