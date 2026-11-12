@@ -50,10 +50,10 @@ use can_hal::{AbortError, BusState, BusStatistics, BusStatus, CanFrame, Confirme
 pub use state::State;
 pub use timing::BitTiming;
 
-use order::MAILBOXES;
+use order::{MAILBOXES, Outstanding, Queue};
 use registers::{
-    BTR_LBKM, BTR_SILM, FMR_FINIT, IER_BOFIE, IER_EPVIE, IER_ERRIE, IER_FMPIE0, IER_FMPIE1, IER_FOVIE0, IER_FOVIE1, IER_LECIE, IER_TMEIE, IR_TXRQ, MCR_INRQ, MCR_NART, MCR_SLEEP, MCR_TTCM, MCR_TXFP, MSR_INAK, MSR_SLAK, RegisterBlock, Regs, tsr_abrq,
-    tsr_tme,
+    BTR_LBKM, BTR_SILM, FMR_FINIT, IER_BOFIE, IER_EPVIE, IER_ERRIE, IER_FMPIE0, IER_FMPIE1, IER_FOVIE0, IER_FOVIE1, IER_LECIE, IER_TMEIE, IR_TXRQ, MCR_INRQ, MCR_NART, MCR_SLEEP, MCR_TTCM, MCR_TXFP, MSR_INAK, MSR_SLAK, RFR_FMP, RFR_FOVR, RFR_RFOM,
+    Reg, RegisterBlock, Regs, tsr_abrq, tsr_tme,
 };
 
 /// A source of time for timestamps and timeouts.
@@ -245,23 +245,7 @@ impl<C: Clock, const N: usize> Can<C, N> {
     pub fn new(peripheral: Peripheral, state: &'static State<C, N>, config: Config) -> Result<Self, Error> {
         let Peripheral(regs) = peripheral;
         let r = regs.get();
-
-        // Out of sleep, into initialisation.
-        r.mcr.modify(|mcr| (mcr & !MCR_SLEEP) | MCR_INRQ);
-        wait_for(r, MSR_INAK | MSR_SLAK, MSR_INAK)?;
-        configure(r, config);
-
-        // Filter bank 0: a 32-bit mask of 0, passing everything to FIFO 0.
-        r.fmr.modify(|fmr| fmr | FMR_FINIT);
-        r.fa1r.modify(|v| v & !1);
-        r.fm1r.modify(|v| v & !1);
-        r.fs1r.modify(|v| v | 1);
-        r.ffa1r.modify(|v| v & !1);
-        r.filter[0].fr1.write(0);
-        r.filter[0].fr2.write(0);
-        r.fa1r.modify(|v| v | 1);
-        r.fmr.modify(|fmr| fmr & !FMR_FINIT);
-
+        initialize(r, config)?;
         state.with(|inner| {
             if inner.regs.is_some() {
                 return Err(Error::StateInUse);
@@ -276,6 +260,40 @@ impl<C: Clock, const N: usize> Can<C, N> {
 
     fn registers(&self) -> &RegisterBlock {
         self.regs.get()
+    }
+
+    /// Brings the controller up again as [`new`](Self::new) did, in
+    /// initialisation mode with `config`, and forgets everything before:
+    /// frames not finished (they are not reported), events not taken
+    /// (received frames among them) and frames waiting in the receive FIFOs.
+    /// Statistics carry on, and transmit identifiers keep counting, so none
+    /// from before can match a frame sent after.
+    ///
+    /// Only a reset of the peripheral clears the error counters (RM0091 gives
+    /// the master reset bit only the `FMP` bits and `CAN_MCR`): for a start
+    /// with nothing carried over, reset the controller through RCC
+    /// (`CANRST`), its clock left on, just before calling this.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InitTimeout`] if the controller doesn't enter initialisation
+    /// mode.
+    pub fn reinitialize(&mut self, config: Config) -> Result<(), Error> {
+        let r = self.registers();
+        r.ier.write(0);
+        initialize(r, config)?;
+        for fifo in &r.rfr {
+            release_all(fifo);
+        }
+        self.state.with(|inner| {
+            inner.events = Queue::new();
+            inner.outstanding = Outstanding::new();
+            inner.bus_state = BusState::ErrorActive;
+            inner.report_bus_errors = config.bus_errors;
+            inner.bus_error = None;
+        });
+        r.ier.write(interrupts(config));
+        Ok(())
     }
 
     /// Stops the controller: aborts the transmissions outstanding, whose
@@ -393,6 +411,44 @@ const fn interrupts(config: Config) -> u32 {
 }
 
 /// Writes `config` to the controller, which must be in initialisation mode.
+/// Takes the controller out of sleep into initialisation mode, configures
+/// it, and sets filter bank 0 to a 32-bit mask of 0, passing everything to
+/// FIFO 0.
+fn initialize(r: &RegisterBlock, config: Config) -> Result<(), Error> {
+    r.mcr.modify(|mcr| (mcr & !MCR_SLEEP) | MCR_INRQ);
+    wait_for(r, MSR_INAK | MSR_SLAK, MSR_INAK)?;
+    configure(r, config);
+
+    r.fmr.modify(|fmr| fmr | FMR_FINIT);
+    r.fa1r.modify(|v| v & !1);
+    r.fm1r.modify(|v| v & !1);
+    r.fs1r.modify(|v| v | 1);
+    r.ffa1r.modify(|v| v & !1);
+    r.filter[0].fr1.write(0);
+    r.filter[0].fr2.write(0);
+    r.fa1r.modify(|v| v | 1);
+    r.fmr.modify(|fmr| fmr & !FMR_FINIT);
+    Ok(())
+}
+
+/// Releases every frame waiting in a receive FIFO (three at most), each once
+/// the hardware has taken the last release, and clears its overrun flag.
+fn release_all(fifo: &Reg) {
+    for _ in 0..3 {
+        if fifo.read() & RFR_FMP == 0 {
+            break;
+        }
+        fifo.write(RFR_RFOM);
+        for _ in 0..MODE_CHANGE_POLLS {
+            if fifo.read() & RFR_RFOM == 0 {
+                break;
+            }
+            core::hint::spin_loop();
+        }
+    }
+    fifo.write(RFR_FOVR);
+}
+
 fn configure(r: &RegisterBlock, config: Config) {
     // Keep the debug freeze bit (16) as it is; transmit in request order;
     // stamp frames with the bit-time counter, to put them in bus order.
