@@ -1,0 +1,35 @@
+#[doc = "Register `COUNT_DITH5_MODE` reader"]
+pub type R = crate::R<CountDith5ModeSpec>;
+#[doc = "Register `COUNT_DITH5_MODE` writer"]
+pub type W = crate::W<CountDith5ModeSpec>;
+#[doc = "Field `COUNT` reader - Counter Value"]
+pub type CountR = crate::FieldReader<u32>;
+#[doc = "Field `COUNT` writer - Counter Value"]
+pub type CountW<'a, REG> = crate::FieldWriter<'a, REG, 27, u32>;
+impl R {
+    #[doc = "Bits 5:31 - Counter Value"]
+    #[inline(always)]
+    pub fn count(&self) -> CountR {
+        CountR::new((self.bits >> 5) & 0x07ff_ffff)
+    }
+}
+impl W {
+    #[doc = "Bits 5:31 - Counter Value"]
+    #[inline(always)]
+    pub fn count(&mut self) -> CountW<'_, CountDith5ModeSpec> {
+        CountW::new(self, 5)
+    }
+}
+#[doc = "Count\n\nYou can [`read`](crate::Reg::read) this register and get [`count_dith5_mode::R`](R). You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`count_dith5_mode::W`](W). You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+pub struct CountDith5ModeSpec;
+impl crate::RegisterSpec for CountDith5ModeSpec {
+    type Ux = u32;
+}
+#[doc = "`read()` method returns [`count_dith5_mode::R`](R) reader structure"]
+impl crate::Readable for CountDith5ModeSpec {}
+#[doc = "`write(|w| ..)` method takes [`count_dith5_mode::W`](W) writer structure"]
+impl crate::Writable for CountDith5ModeSpec {
+    type Safety = crate::Unsafe;
+}
+#[doc = "`reset()` method sets COUNT_DITH5_MODE to value 0"]
+impl crate::Resettable for CountDith5ModeSpec {}

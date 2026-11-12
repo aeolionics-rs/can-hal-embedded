@@ -1,0 +1,49 @@
+#[doc = "Register `DBGCTRL` reader"]
+pub type R = crate::R<DbgctrlSpec>;
+#[doc = "Register `DBGCTRL` writer"]
+pub type W = crate::W<DbgctrlSpec>;
+#[doc = "Field `CRCRUN` reader - CRC Debug Run"]
+pub type CrcrunR = crate::BitReader;
+#[doc = "Field `CRCRUN` writer - CRC Debug Run"]
+pub type CrcrunW<'a, REG> = crate::BitWriter<'a, REG>;
+#[doc = "Field `DBGECC` reader - Debug ECC Mode"]
+pub type DbgeccR = crate::FieldReader;
+#[doc = "Field `DBGECC` writer - Debug ECC Mode"]
+pub type DbgeccW<'a, REG> = crate::FieldWriter<'a, REG, 2>;
+impl R {
+    #[doc = "Bit 0 - CRC Debug Run"]
+    #[inline(always)]
+    pub fn crcrun(&self) -> CrcrunR {
+        CrcrunR::new((self.bits & 1) != 0)
+    }
+    #[doc = "Bits 1:2 - Debug ECC Mode"]
+    #[inline(always)]
+    pub fn dbgecc(&self) -> DbgeccR {
+        DbgeccR::new(((self.bits >> 1) & 3) as u8)
+    }
+}
+impl W {
+    #[doc = "Bit 0 - CRC Debug Run"]
+    #[inline(always)]
+    pub fn crcrun(&mut self) -> CrcrunW<'_, DbgctrlSpec> {
+        CrcrunW::new(self, 0)
+    }
+    #[doc = "Bits 1:2 - Debug ECC Mode"]
+    #[inline(always)]
+    pub fn dbgecc(&mut self) -> DbgeccW<'_, DbgctrlSpec> {
+        DbgeccW::new(self, 1)
+    }
+}
+#[doc = "Debug Control Register\n\nYou can [`read`](crate::Reg::read) this register and get [`dbgctrl::R`](R). You can [`reset`](crate::Reg::reset), [`write`](crate::Reg::write), [`write_with_zero`](crate::Reg::write_with_zero) this register using [`dbgctrl::W`](W). You can also [`modify`](crate::Reg::modify) this register. See [API](https://docs.rs/svd2rust/#read--modify--write-api)."]
+pub struct DbgctrlSpec;
+impl crate::RegisterSpec for DbgctrlSpec {
+    type Ux = u32;
+}
+#[doc = "`read()` method returns [`dbgctrl::R`](R) reader structure"]
+impl crate::Readable for DbgctrlSpec {}
+#[doc = "`write(|w| ..)` method takes [`dbgctrl::W`](W) writer structure"]
+impl crate::Writable for DbgctrlSpec {
+    type Safety = crate::Unsafe;
+}
+#[doc = "`reset()` method sets DBGCTRL to value 0"]
+impl crate::Resettable for DbgctrlSpec {}

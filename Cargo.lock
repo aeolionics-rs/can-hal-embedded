@@ -184,6 +184,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
+name = "curiosity-pic32ck"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "panic-halt",
+ "pic32ck-sg01-pac",
+ "rtt-target",
+]
+
+[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -774,6 +785,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "panic-halt"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a513e167849a384b7f9b746e517604398518590a9142f4846a32e3c2a4de7b11"
+
+[[package]]
 name = "panic-probe"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -781,6 +798,16 @@ checksum = "fd402d00b0fb94c5aee000029204a46884b1262e0c443f166d86d2c0747e1a1a"
 dependencies = [
  "cortex-m",
  "defmt 1.2.0",
+]
+
+[[package]]
+name = "pic32ck-sg01-pac"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "critical-section",
+ "vcell",
 ]
 
 [[package]]
@@ -853,6 +880,17 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "rtt-target"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7afed1f4302eeba88c601636cf2c554c45e1cbb464bab44c6012bab0e71473c"
+dependencies = [
+ "critical-section",
+ "portable-atomic",
+ "ufmt-write",
+]
 
 [[package]]
 name = "rustc_version"
@@ -1088,6 +1126,12 @@ dependencies = [
  "quote",
  "syn 1.0.109",
 ]
+
+[[package]]
+name = "ufmt-write"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e87a2ed6b42ec5e28cc3b94c09982969e9227600b2e3dcbc1db927a84c06bd69"
 
 [[package]]
 name = "unicode-ident"
