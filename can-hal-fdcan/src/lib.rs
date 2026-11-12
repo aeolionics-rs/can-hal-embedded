@@ -54,7 +54,7 @@ use can_hal::{AbortError, BusState, BusStatistics, BusStatus, CanFrame, Confirme
 pub use state::State;
 pub use timing::BitTiming;
 
-use order::MAILBOXES;
+use order::{MAILBOXES, Outstanding, Queue};
 use registers::{
     CCCR_BRSE, CCCR_CCE, CCCR_DAR, CCCR_FDOE, CCCR_INIT, CCCR_MON, CCCR_TEST, DBTP_TDC, H1_MM_SHIFT, ILE_EINT0, IR_BO, IR_EP, IR_PEA, IR_PED, IR_RF0L, IR_RF0N, IR_TCF, IR_TEFN, MessageRam, PSR_ACT_MASK, RegisterBlock, Regs, T1_EFC, TEST_LBCK,
     TOCC_ETOC, TOCC_TOP_SHIFT, TSCC_TSS_INTERNAL, TXFQS_TFQF, TXFQS_TFQPI_SHIFT,
@@ -353,6 +353,39 @@ impl<C: Clock, const N: usize> Can<C, N> {
             inner.bus_error = None;
             inner.bus_state = BusState::ErrorActive;
         });
+        Ok(())
+    }
+
+    /// Sets the controller up again as [`new`](Self::new) did, stopped, with
+    /// `config`, and forgets everything before: frames not finished (they
+    /// are not reported) and events not taken, received frames among them.
+    /// Setting it up empties the receive FIFO (setting `CCCR.CCE` resets its
+    /// status) and clears the message RAM. Statistics carry on, and transmit
+    /// identifiers keep counting, so none from before can match a frame sent
+    /// after.
+    ///
+    /// Only a reset of the peripheral clears the error counters (RM0440:
+    /// setting `CCCR.INIT` leaves them unchanged): for a start with nothing
+    /// carried over, reset FDCAN through RCC (`FDCANRST`), its clock left on,
+    /// just before calling this.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InitTimeout`] if the controller doesn't enter initialisation.
+    pub fn reinitialize(&mut self, config: Config) -> Result<(), Error> {
+        let r = self.registers();
+        r.ie.write(0);
+        enter_init(r)?;
+        self.state.with(|inner| {
+            inner.events = Queue::new();
+            inner.outstanding = Outstanding::new();
+            inner.report_bus_errors = config.bus_errors;
+            inner.single_shot = !config.retransmit;
+            inner.watching = false;
+            inner.bus_error = None;
+            inner.bus_state = BusState::ErrorActive;
+        });
+        configure(r, self.regs.ram(), config);
         Ok(())
     }
 

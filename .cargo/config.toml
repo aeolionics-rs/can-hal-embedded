@@ -4,7 +4,8 @@
 # can-hal-fdcan's bench tests on the NUCLEO-G431KB (its STLINK-V3 is 0483:374e).
 run-fdcan-loopback = ["run", "--config", "env.PROBE_RS_PROBE='0483:374e'", "-p", "nucleo-g431kb", "--target", "thumbv7em-none-eabihf", "--bin", "loopback"]
 run-fdcan-dar = ["run", "--config", "env.PROBE_RS_PROBE='0483:374e'", "-p", "nucleo-g431kb", "--target", "thumbv7em-none-eabihf", "--bin", "dar"]
-clippy-fdcan-bench = "clippy -p nucleo-g431kb --target thumbv7em-none-eabihf"
+run-fdcan-reset = ["run", "--config", "env.PROBE_RS_PROBE='0483:374e'", "-p", "nucleo-g431kb", "--target", "thumbv7em-none-eabihf", "--bin", "reset"]
+clippy-fdcan-bench ="clippy -p nucleo-g431kb --target thumbv7em-none-eabihf"
 
 # The G431 sleeps in the executor's idle, where the probe can't attach.
 [target.thumbv7em-none-eabihf]
