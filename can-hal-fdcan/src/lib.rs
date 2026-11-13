@@ -56,8 +56,8 @@ pub use timing::BitTiming;
 
 use order::{MAILBOXES, Outstanding, Queue};
 use registers::{
-    CCCR_BRSE, CCCR_CCE, CCCR_DAR, CCCR_FDOE, CCCR_INIT, CCCR_MON, CCCR_TEST, DBTP_TDC, H1_MM_SHIFT, ILE_EINT0, IR_BO, IR_EP, IR_EW, IR_PEA, IR_PED, IR_RF0L, IR_RF0N, IR_TCF, IR_TEFN, MessageRam, PSR_ACT_MASK, RegisterBlock, Regs, T1_EFC, TEST_LBCK,
-    TOCC_ETOC, TOCC_TOP_SHIFT, TSCC_TSS_INTERNAL, TXFQS_TFQF, TXFQS_TFQPI_SHIFT,
+    CCCR_BRSE, CCCR_CCE, CCCR_DAR, CCCR_FDOE, CCCR_INIT, CCCR_MON, CCCR_TEST, DBTP_TDC, ECR_RP, H1_MM_SHIFT, ILE_EINT0, IR_BO, IR_EP, IR_EW, IR_PEA, IR_PED, IR_RF0L, IR_RF0N, IR_TCF, IR_TEFN, MessageRam, PSR_ACT_MASK, RegisterBlock, Regs, T1_EFC,
+    TEST_LBCK, TOCC_ETOC, TOCC_TOP_SHIFT, TSCC_TSS_INTERNAL, TXFQS_TFQF, TXFQS_TFQPI_SHIFT,
 };
 
 /// A source of time for timestamps and timeouts.
@@ -706,12 +706,15 @@ impl<C: Clock, const N: usize> BusStatus for Status<C, N> {
         }))
     }
 
+    /// The receive counter is 128 while the controller is receive error
+    /// passive: REC holds only seven bits (to 127), and ECR.RP says it has
+    /// reached 128 (RM0440), as a passive receiver's counter does.
     fn error_counters(&self) -> Result<ErrorCounters, Error> {
         let ecr = self.regs.get().ecr.read();
         #[expect(clippy::cast_possible_truncation, reason = "the counters are seven- and eight-bit fields")]
         Ok(ErrorCounters {
             transmit: ecr as u8,
-            receive: ((ecr >> 8) & 0x7F) as u8,
+            receive: if ecr & ECR_RP != 0 { 128 } else { ((ecr >> 8) & 0x7F) as u8 },
         })
     }
 }
