@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026-2026. Aeolionics, LLC
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
 """Patch Microchip's SVD so svd2rust's output compiles. Writes a copy.
 
 - Drops the Arm core peripherals (and their `_NS` aliases): svd2rust leaves

@@ -1,4 +1,8 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026-2026. Aeolionics, LLC
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
 # Regenerate the PAC from svd/PIC32CK2051SG01144.svd.
 #
 # Needs svd2rust 0.37 and form on PATH (cargo install svd2rust@0.37.1 form),

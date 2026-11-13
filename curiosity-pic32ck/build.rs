@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026-2026. Aeolionics, LLC
+//
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Puts `memory.x` where the linker looks for it.
 
 use std::env;
