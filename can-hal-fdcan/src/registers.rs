@@ -169,6 +169,9 @@ pub(crate) const TEST_LBCK: u32 = 1 << 4;
 // DBTP: data bit timing.
 pub(crate) const DBTP_TDC: u32 = 1 << 23;
 
+// ECR: error counters. REC counts to 127; RP says it has reached 128.
+pub(crate) const ECR_RP: u32 = 1 << 15;
+
 // PSR: protocol status.
 pub(crate) const PSR_EP: u32 = 1 << 5;
 /// Either error counter has reached the warning limit, 96.
