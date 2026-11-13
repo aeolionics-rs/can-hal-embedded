@@ -14,7 +14,7 @@ defmt = ["dep:defmt"]
 
 [dependencies]
 # Our fork's `aeolionics` branch, for the confirmed-transmission traits.
-can-hal = { version = "0.4.3", path = "../../can-hal-rs/can-hal", package = "can-hal-rs", default-features = false }
+can-hal = { version = "0.4.3", git = "https://github.com/aeolionics-rs/can-hal-rs", branch = "aeolionics", package = "can-hal-rs", default-features = false }
 critical-section = "1.2.0"
 defmt = { version = "1.2.0", optional = true }
 
