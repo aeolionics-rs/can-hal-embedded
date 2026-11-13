@@ -133,6 +133,12 @@ pub(crate) const fn tsr_rqcp(n: usize) -> u32 {
 pub(crate) const fn tsr_txok(n: usize) -> u32 {
     1 << (8 * n + 1)
 }
+pub(crate) const fn tsr_alst(n: usize) -> u32 {
+    1 << (8 * n + 2)
+}
+pub(crate) const fn tsr_terr(n: usize) -> u32 {
+    1 << (8 * n + 3)
+}
 pub(crate) const fn tsr_abrq(n: usize) -> u32 {
     1 << (8 * n + 7)
 }

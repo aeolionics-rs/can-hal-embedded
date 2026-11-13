@@ -13,8 +13,8 @@ use critical_section::Mutex;
 
 use crate::frame::{self, Words};
 use crate::order::{MAILBOXES, Outstanding, Queue};
-use crate::registers::{ESR_BOFF, ESR_EPVF, ESR_EWGF, ESR_LEC_SHIFT, LEC_SOFTWARE, MSR_ERRI, RFR_FMP, RFR_FOVR, RFR_RFOM, RegisterBlock, Regs, tsr_abrq, tsr_rqcp, tsr_txok};
-use crate::{BusError, Clock};
+use crate::registers::{ESR_BOFF, ESR_EPVF, ESR_EWGF, ESR_LEC_SHIFT, LEC_SOFTWARE, MSR_ERRI, RFR_FMP, RFR_FOVR, RFR_RFOM, RegisterBlock, Regs, tsr_abrq, tsr_alst, tsr_rqcp, tsr_terr, tsr_txok};
+use crate::{BusError, Clock, FailureCause};
 
 /// The state a [`Can`](crate::Can) channel shares with its interrupt handler,
 /// with room for `N` events. Declare one per controller as a `static`, give it
@@ -37,6 +37,10 @@ pub(crate) struct Inner<T, const N: usize> {
     pub(crate) bus_error: Option<BusError>,
     pub(crate) error_waker: Option<Waker>,
     pub(crate) warning: Warning,
+    /// Why the latest transmissions given up failed, until taken; the
+    /// oldest is overwritten.
+    causes: [Option<(TransmitId, FailureCause)>; MAILBOXES],
+    next_cause: usize,
 }
 
 /// Whether an error counter is at the warning level, as last read and as
@@ -94,7 +98,7 @@ pub(crate) struct Counts {
 /// Something that happened, with the bit-time stamp of its start of frame.
 #[derive(Clone)]
 enum Happening {
-    Finished { mailbox: u8, sent: bool },
+    Finished { mailbox: u8, sent: bool, cause: Option<FailureCause> },
     Received(CanFrame),
 }
 
@@ -123,6 +127,8 @@ impl<C: Clock, const N: usize> State<C, N> {
                 bus_error: None,
                 error_waker: None,
                 warning: Warning::new(),
+                causes: [None; MAILBOXES],
+                next_cause: 0,
                 counts: Counts {
                     rx_frames: 0,
                     tx_frames: 0,
@@ -173,10 +179,19 @@ impl<T: Clone, const N: usize> Inner<T, N> {
             if tsr & tsr_rqcp(mailbox) != 0 {
                 r.tsr.write(tsr_rqcp(mailbox));
                 let time = (tx.tdtr.read() >> 16) as u16;
+                // The last attempt's failure, when it failed.
+                let cause = if tsr & tsr_alst(mailbox) != 0 {
+                    Some(FailureCause::LostArbitration)
+                } else if tsr & tsr_terr(mailbox) != 0 {
+                    Some(FailureCause::Error)
+                } else {
+                    None
+                };
                 #[allow(clippy::cast_possible_truncation)] // three mailboxes
                 let finished = Happening::Finished {
                     mailbox: mailbox as u8,
                     sent: tsr & tsr_txok(mailbox) != 0,
+                    cause,
                 };
                 happened[count] = Some((time, finished));
                 count += 1;
@@ -216,11 +231,16 @@ impl<T: Clone, const N: usize> Inner<T, N> {
         }
         for (_, happening) in happened.iter_mut().filter_map(Option::take) {
             match happening {
-                Happening::Finished { mailbox, sent } => {
+                Happening::Finished { mailbox, sent, cause } => {
                     if sent {
                         self.counts.tx_frames += 1;
                     }
-                    self.outstanding.finish(mailbox, sent.then(|| now.clone()));
+                    if let Some((id, true)) = self.outstanding.finish(mailbox, sent.then(|| now.clone()))
+                        && let Some(cause) = cause
+                    {
+                        self.causes[self.next_cause] = Some((id, cause));
+                        self.next_cause = (self.next_cause + 1) % MAILBOXES;
+                    }
                     self.push_reports();
                 }
                 Happening::Received(frame) => self.push_received(frame, now),
@@ -290,6 +310,12 @@ impl<T: Clone, const N: usize> Inner<T, N> {
             }
         }
         let _ = self.events.push(Event::BusStateChanged(state));
+    }
+
+    /// Why transmission `id` was given up, if noted and not yet taken.
+    pub(crate) fn take_cause(&mut self, id: TransmitId) -> Option<FailureCause> {
+        let slot = self.causes.iter_mut().find(|slot| slot.is_some_and(|(noted, _)| noted == id))?;
+        slot.take().map(|(_, cause)| cause)
     }
 
     pub(crate) fn take_id(&mut self) -> TransmitId {
