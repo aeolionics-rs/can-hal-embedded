@@ -56,7 +56,7 @@ pub use timing::BitTiming;
 
 use order::{MAILBOXES, Outstanding, Queue};
 use registers::{
-    CCCR_BRSE, CCCR_CCE, CCCR_DAR, CCCR_FDOE, CCCR_INIT, CCCR_MON, CCCR_TEST, DBTP_TDC, H1_MM_SHIFT, ILE_EINT0, IR_BO, IR_EP, IR_PEA, IR_PED, IR_RF0L, IR_RF0N, IR_TCF, IR_TEFN, MessageRam, PSR_ACT_MASK, RegisterBlock, Regs, T1_EFC, TEST_LBCK,
+    CCCR_BRSE, CCCR_CCE, CCCR_DAR, CCCR_FDOE, CCCR_INIT, CCCR_MON, CCCR_TEST, DBTP_TDC, H1_MM_SHIFT, ILE_EINT0, IR_BO, IR_EP, IR_EW, IR_PEA, IR_PED, IR_RF0L, IR_RF0N, IR_TCF, IR_TEFN, MessageRam, PSR_ACT_MASK, RegisterBlock, Regs, T1_EFC, TEST_LBCK,
     TOCC_ETOC, TOCC_TOP_SHIFT, TSCC_TSS_INTERNAL, TXFQS_TFQF, TXFQS_TFQPI_SHIFT,
 };
 
@@ -352,6 +352,7 @@ impl<C: Clock, const N: usize> Can<C, N> {
             inner.watching = false;
             inner.bus_error = None;
             inner.bus_state = BusState::ErrorActive;
+            inner.warning.forget();
         });
         Ok(())
     }
@@ -384,6 +385,7 @@ impl<C: Clock, const N: usize> Can<C, N> {
             inner.watching = false;
             inner.bus_error = None;
             inner.bus_state = BusState::ErrorActive;
+            inner.warning.forget();
         });
         configure(r, self.regs.ram(), config);
         Ok(())
@@ -432,6 +434,24 @@ impl<C: Clock, const N: usize> Can<C, N> {
         .await
     }
 
+    /// Whether either error counter is at the warning level (96 or more)
+    /// once that has changed since the last call, waiting for a change. It
+    /// changes with the counters, so not in step with
+    /// [`Event::BusStateChanged`]: it is still set when the channel becomes
+    /// error passive or goes bus-off (can-hal's [`BusState`] has no warning
+    /// state). Changes that come faster than they are read are merged, so a
+    /// change and back may go unseen.
+    pub async fn next_warning_change(&self) -> bool {
+        let regs = self.regs;
+        poll_fn(|cx| {
+            self.state.with(|inner| {
+                let _ = inner.update_bus_state(regs.get());
+                inner.warning.poll_change(cx)
+            })
+        })
+        .await
+    }
+
     /// The next event, waiting for one.
     pub async fn next_event(&self) -> Event<Frame, C::Instant> {
         let regs = self.regs;
@@ -475,12 +495,13 @@ fn wait_for_init(r: &RegisterBlock, value: u32) -> Result<(), Error> {
 }
 
 /// The interrupts `config` needs: Tx events, frames received, overruns,
-/// cancellations finished, error passive and bus-off changes, and each bus
+/// cancellations finished, error warning, error passive and bus-off
+/// changes, and each bus
 /// error if reported or if frames are single-shot (see
 /// [`Inner::watch_failures`](state::Inner::watch_failures)). The timeout
 /// counter's is enabled only while it is needed.
 const fn interrupts(config: Config) -> u32 {
-    let base = IR_TEFN | IR_RF0N | IR_RF0L | IR_TCF | IR_EP | IR_BO;
+    let base = IR_TEFN | IR_RF0N | IR_RF0L | IR_TCF | IR_EW | IR_EP | IR_BO;
     if config.bus_errors || !config.retransmit { base | IR_PEA | IR_PED } else { base }
 }
 
