@@ -32,7 +32,7 @@ release workflow regenerates the lockfile before it builds.
   (`cargo run-fdcan-loopback`; `cargo run-fdcan-dar` with a jumper from PA12
   to PA11).
 
-The crates came from [ferrocan](https://github.com/aeolionics-rs/ferrocan),
+The crates came from [ferrocan](https://github.com/ferrocan/ferrocan),
 the gs_usb adapter firmware that uses them, with their history. This
 repository focuses on embedded drivers, but keeps each one self-contained:
 none depends on another.
