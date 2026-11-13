@@ -33,9 +33,9 @@ release workflow regenerates the lockfile before it builds.
   to PA11).
 
 The crates came from [ferrocan](https://github.com/aeolionics-rs/ferrocan),
-the gs_usb adapter firmware that uses them, with their history. Each is
-independent of the others, so any could move to can-hal-rs itself if its
-maintainers want embedded backends there.
+the gs_usb adapter firmware that uses them, with their history. This
+repository focuses on embedded drivers, but keeps each one self-contained:
+none depends on another.
 
 # Licence
 
