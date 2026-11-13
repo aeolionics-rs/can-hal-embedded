@@ -1,3 +1,7 @@
+# Local overrides, untracked: a [patch] pointing the git dependencies at the
+# sibling checkouts, for changes not yet pushed (see the README).
+include = [{ path = "local.toml", optional = true }]
+
 # The drivers build and test natively; the bench crates name their target in
 # their aliases, so there is no default target.
 [alias]
