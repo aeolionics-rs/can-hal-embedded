@@ -190,6 +190,19 @@ impl BusError {
     }
 }
 
+/// Why the controller gave up on a frame, as [`Can::failure_cause`] tells
+/// it: bxCAN marks each mailbox's last attempt (TSR's ALST and TERR).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
+pub enum FailureCause {
+    /// Its last attempt lost arbitration.
+    LostArbitration,
+    /// Its last attempt failed on an error (see [`Can::next_bus_error`]
+    /// for which, when bus errors are reported).
+    Error,
+}
+
 /// The errors of this backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -403,6 +416,14 @@ impl<C: Clock, const N: usize> Can<C, N> {
             })
         })
         .await
+    }
+
+    /// Why the controller gave up on transmission `id`, reported
+    /// [`Failed`](can_hal::Outcome::Failed), if it said; taken, so asked
+    /// once. Only the latest few are kept: ask as the report is read.
+    #[must_use]
+    pub fn failure_cause(&self, id: TransmitId) -> Option<FailureCause> {
+        self.state.with(|inner| inner.take_cause(id))
     }
 
     /// The next event, waiting for one.

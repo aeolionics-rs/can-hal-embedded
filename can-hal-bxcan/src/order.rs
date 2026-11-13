@@ -84,18 +84,20 @@ impl<T> Outstanding<T> {
 
     /// The transmission in `mailbox` has finished: `sent` with its time if it
     /// was transmitted. If not, it was aborted when that was asked for, or else
-    /// the controller gave up on it (single-shot, or going bus-off).
-    pub(crate) fn finish(&mut self, mailbox: u8, sent: Option<T>) {
+    /// the controller gave up on it (single-shot, or going bus-off). Returns
+    /// the transmission's id, and whether it failed (given up).
+    pub(crate) fn finish(&mut self, mailbox: u8, sent: Option<T>) -> Option<(TransmitId, bool)> {
         // A mailbox is reused once it has finished, so it's the oldest
         // unfinished transmission in it that finished now.
-        let Some(entry) = self.iter_mut().find(|e| e.mailbox == mailbox && e.outcome.is_none()) else {
-            return;
-        };
-        entry.outcome = Some(match sent {
+        let entry = self.iter_mut().find(|e| e.mailbox == mailbox && e.outcome.is_none())?;
+        let outcome = match sent {
             Some(time) => Outcome::Sent(time),
             None if entry.abort_requested => Outcome::Aborted(Abort::Confirmed),
             None => Outcome::Failed(Failure::GaveUp),
-        });
+        };
+        let failed = matches!(outcome, Outcome::Failed(_));
+        entry.outcome = Some(outcome);
+        Some((entry.id, failed))
     }
 
     /// The report of the oldest transmission, if it has finished.
