@@ -52,8 +52,8 @@ pub use timing::BitTiming;
 
 use order::{MAILBOXES, Outstanding, Queue};
 use registers::{
-    BTR_LBKM, BTR_SILM, FMR_FINIT, IER_BOFIE, IER_EPVIE, IER_ERRIE, IER_FMPIE0, IER_FMPIE1, IER_FOVIE0, IER_FOVIE1, IER_LECIE, IER_TMEIE, IR_TXRQ, MCR_INRQ, MCR_NART, MCR_SLEEP, MCR_TTCM, MCR_TXFP, MSR_INAK, MSR_SLAK, RFR_FMP, RFR_FOVR, RFR_RFOM,
-    Reg, RegisterBlock, Regs, tsr_abrq, tsr_tme,
+    BTR_LBKM, BTR_SILM, FMR_FINIT, IER_BOFIE, IER_EPVIE, IER_ERRIE, IER_EWGIE, IER_FMPIE0, IER_FMPIE1, IER_FOVIE0, IER_FOVIE1, IER_LECIE, IER_TMEIE, IR_TXRQ, MCR_INRQ, MCR_NART, MCR_SLEEP, MCR_TTCM, MCR_TXFP, MSR_INAK, MSR_SLAK, RFR_FMP, RFR_FOVR,
+    RFR_RFOM, Reg, RegisterBlock, Regs, tsr_abrq, tsr_tme,
 };
 
 /// A source of time for timestamps and timeouts.
@@ -289,6 +289,7 @@ impl<C: Clock, const N: usize> Can<C, N> {
             inner.events = Queue::new();
             inner.outstanding = Outstanding::new();
             inner.bus_state = BusState::ErrorActive;
+            inner.warning.forget();
             inner.report_bus_errors = config.bus_errors;
             inner.bus_error = None;
         });
@@ -344,6 +345,7 @@ impl<C: Clock, const N: usize> Can<C, N> {
             inner.report_bus_errors = config.bus_errors;
             inner.bus_error = None;
             inner.bus_state = BusState::ErrorActive;
+            inner.warning.forget();
         });
         Ok(())
     }
@@ -385,6 +387,24 @@ impl<C: Clock, const N: usize> Can<C, N> {
         .await
     }
 
+    /// Whether either error counter is at the warning level (96 or more)
+    /// once that has changed since the last call, waiting for a change. It
+    /// changes with the counters, so not in step with
+    /// [`Event::BusStateChanged`]: it is still set when the channel becomes
+    /// error passive or goes bus-off (can-hal's [`BusState`] has no warning
+    /// state). Changes that come faster than they are read are merged, so a
+    /// change and back may go unseen.
+    pub async fn next_warning_change(&self) -> bool {
+        let regs = self.regs;
+        poll_fn(|cx| {
+            self.state.with(|inner| {
+                inner.update_bus_state(regs.get());
+                inner.warning.poll_change(cx)
+            })
+        })
+        .await
+    }
+
     /// The next event, waiting for one.
     pub async fn next_event(&self) -> Event<CanFrame, C::Instant> {
         let regs = self.regs;
@@ -404,9 +424,10 @@ impl<C: Clock, const N: usize> Can<C, N> {
 }
 
 /// The interrupts `config` needs: transmissions finished, frames received,
-/// overruns, error passive and bus-off, and each bus error if reported.
+/// overruns, error warning, error passive and bus-off, and each bus error if
+/// reported.
 const fn interrupts(config: Config) -> u32 {
-    let base = IER_TMEIE | IER_FMPIE0 | IER_FMPIE1 | IER_FOVIE0 | IER_FOVIE1 | IER_EPVIE | IER_BOFIE | IER_ERRIE;
+    let base = IER_TMEIE | IER_FMPIE0 | IER_FMPIE1 | IER_FOVIE0 | IER_FOVIE1 | IER_EWGIE | IER_EPVIE | IER_BOFIE | IER_ERRIE;
     if config.bus_errors { base | IER_LECIE } else { base }
 }
 

@@ -171,6 +171,8 @@ pub(crate) const DBTP_TDC: u32 = 1 << 23;
 
 // PSR: protocol status.
 pub(crate) const PSR_EP: u32 = 1 << 5;
+/// Either error counter has reached the warning limit, 96.
+pub(crate) const PSR_EW: u32 = 1 << 6;
 pub(crate) const PSR_BO: u32 = 1 << 7;
 /// ACT: 0 while synchronising, then idle, receiving or transmitting.
 pub(crate) const PSR_ACT_MASK: u32 = 0b11 << 3;
@@ -192,6 +194,7 @@ pub(crate) const IR_TCF: u32 = 1 << 8;
 pub(crate) const IR_TEFN: u32 = 1 << 10;
 pub(crate) const IR_TOO: u32 = 1 << 15;
 pub(crate) const IR_EP: u32 = 1 << 17;
+pub(crate) const IR_EW: u32 = 1 << 18;
 pub(crate) const IR_BO: u32 = 1 << 19;
 pub(crate) const IR_PEA: u32 = 1 << 21;
 pub(crate) const IR_PED: u32 = 1 << 22;

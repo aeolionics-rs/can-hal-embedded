@@ -6,14 +6,14 @@
 //! outstanding transmissions and the counts, behind a critical section.
 
 use core::cell::RefCell;
-use core::task::Waker;
+use core::task::{Context, Poll, Waker};
 
 use can_hal::{BusState, CanFrame, Event, Timestamped, TransmitId};
 use critical_section::Mutex;
 
 use crate::frame::{self, Words};
 use crate::order::{MAILBOXES, Outstanding, Queue};
-use crate::registers::{ESR_BOFF, ESR_EPVF, ESR_LEC_SHIFT, LEC_SOFTWARE, MSR_ERRI, RFR_FMP, RFR_FOVR, RFR_RFOM, RegisterBlock, Regs, tsr_abrq, tsr_rqcp, tsr_txok};
+use crate::registers::{ESR_BOFF, ESR_EPVF, ESR_EWGF, ESR_LEC_SHIFT, LEC_SOFTWARE, MSR_ERRI, RFR_FMP, RFR_FOVR, RFR_RFOM, RegisterBlock, Regs, tsr_abrq, tsr_rqcp, tsr_txok};
 use crate::{BusError, Clock};
 
 /// The state a [`Can`](crate::Can) channel shares with its interrupt handler,
@@ -36,6 +36,48 @@ pub(crate) struct Inner<T, const N: usize> {
     pub(crate) report_bus_errors: bool,
     pub(crate) bus_error: Option<BusError>,
     pub(crate) error_waker: Option<Waker>,
+    pub(crate) warning: Warning,
+}
+
+/// Whether an error counter is at the warning level, as last read and as
+/// last taken by `next_warning_change`, and who waits for it to change.
+pub(crate) struct Warning {
+    now: bool,
+    taken: bool,
+    waker: Option<Waker>,
+}
+
+impl Warning {
+    pub(crate) const fn new() -> Self {
+        Self { now: false, taken: false, waker: None }
+    }
+
+    /// Notes the level as read, waking the waiter on a change.
+    pub(crate) fn update(&mut self, now: bool) {
+        if now != self.now {
+            self.now = now;
+            if let Some(waker) = self.waker.take() {
+                waker.wake();
+            }
+        }
+    }
+
+    /// The level once it differs from the one last taken; otherwise waits.
+    pub(crate) fn poll_change(&mut self, cx: &Context<'_>) -> Poll<bool> {
+        if self.now == self.taken {
+            self.waker = Some(cx.waker().clone());
+            Poll::Pending
+        } else {
+            self.taken = self.now;
+            Poll::Ready(self.now)
+        }
+    }
+
+    /// Forgets the level, as after a reset, without waking the waiter.
+    pub(crate) fn forget(&mut self) {
+        self.now = false;
+        self.taken = false;
+    }
 }
 
 /// Running counts for [`Statistics`](can_hal::Statistics).
@@ -80,6 +122,7 @@ impl<C: Clock, const N: usize> State<C, N> {
                 report_bus_errors: false,
                 bus_error: None,
                 error_waker: None,
+                warning: Warning::new(),
                 counts: Counts {
                     rx_frames: 0,
                     tx_frames: 0,
@@ -184,9 +227,11 @@ impl<T: Clone, const N: usize> Inner<T, N> {
             }
         }
 
-        // Error state. ERRI is set when the controller became error passive or
-        // went bus-off; there is no interrupt for recovering, so the state is
-        // also checked as events are read.
+        // Error state. ERRI is set when the controller reached the warning
+        // level, became error passive or went bus-off; there is no interrupt
+        // for going back, so the state is also checked as events are read
+        // (and the counters fall only as frames go through, which
+        // interrupt).
         if r.msr.read() & MSR_ERRI != 0 {
             r.msr.write(MSR_ERRI);
         }
@@ -226,11 +271,15 @@ impl<T: Clone, const N: usize> Inner<T, N> {
         }
     }
 
-    /// Reads the error state, queuing a change. On going bus-off, the
+    /// Reads the error state, queuing a change and waking
+    /// `next_warning_change` when the warning level changes. On going bus-off, the
     /// controller would hold its transmissions until it recovers; they are
     /// aborted instead, and so reported as given up.
     pub(crate) fn update_bus_state(&mut self, r: &RegisterBlock) {
-        let state = bus_state(r.esr.read());
+        let esr = r.esr.read();
+        let warning = esr & ESR_EWGF != 0;
+        self.warning.update(warning);
+        let state = bus_state(esr);
         if state == self.bus_state {
             return;
         }

@@ -6,14 +6,14 @@
 //! outstanding transmissions and the counts, behind a critical section.
 
 use core::cell::RefCell;
-use core::task::Waker;
+use core::task::{Context, Poll, Waker};
 
 use can_hal::{BusState, Event, Frame, Timestamped, TransmitId};
 use critical_section::Mutex;
 
 use crate::frame::{self, Element};
 use crate::order::{MAILBOXES, Outstanding, Queue};
-use crate::registers::{self, IR_PEA, IR_PED, IR_RF0L, IR_TOO, PSR_BO, PSR_DLEC_SHIFT, PSR_EP, PSR_LEC_SHIFT, RXFS_FFL_MASK, RXFS_FGI_SHIFT, RegisterBlock, Regs, TXEFS_EFFL_MASK, TXEFS_EFGI_SHIFT};
+use crate::registers::{self, IR_PEA, IR_PED, IR_RF0L, IR_TOO, PSR_BO, PSR_DLEC_SHIFT, PSR_EP, PSR_EW, PSR_LEC_SHIFT, RXFS_FFL_MASK, RXFS_FGI_SHIFT, RegisterBlock, Regs, TXEFS_EFFL_MASK, TXEFS_EFGI_SHIFT};
 use crate::{BusError, Clock};
 
 /// The state a [`Can`](crate::Can) channel shares with its interrupt handler,
@@ -36,10 +36,52 @@ pub(crate) struct Inner<T, const N: usize> {
     pub(crate) report_bus_errors: bool,
     pub(crate) bus_error: Option<BusError>,
     pub(crate) error_waker: Option<Waker>,
+    pub(crate) warning: Warning,
     /// Whether frames are single-shot, and whether the timeout counter is
     /// watching for one to be marked failed.
     pub(crate) single_shot: bool,
     pub(crate) watching: bool,
+}
+
+/// Whether an error counter is at the warning level, as last read and as
+/// last taken by `next_warning_change`, and who waits for it to change.
+pub(crate) struct Warning {
+    now: bool,
+    taken: bool,
+    waker: Option<Waker>,
+}
+
+impl Warning {
+    pub(crate) const fn new() -> Self {
+        Self { now: false, taken: false, waker: None }
+    }
+
+    /// Notes the level as read, waking the waiter on a change.
+    pub(crate) fn update(&mut self, now: bool) {
+        if now != self.now {
+            self.now = now;
+            if let Some(waker) = self.waker.take() {
+                waker.wake();
+            }
+        }
+    }
+
+    /// The level once it differs from the one last taken; otherwise waits.
+    pub(crate) fn poll_change(&mut self, cx: &Context<'_>) -> Poll<bool> {
+        if self.now == self.taken {
+            self.waker = Some(cx.waker().clone());
+            Poll::Pending
+        } else {
+            self.taken = self.now;
+            Poll::Ready(self.now)
+        }
+    }
+
+    /// Forgets the level, as after a reset, without waking the waiter.
+    pub(crate) fn forget(&mut self) {
+        self.now = false;
+        self.taken = false;
+    }
 }
 
 /// Running counts for [`Statistics`](can_hal::Statistics).
@@ -94,6 +136,7 @@ impl<C: Clock, const N: usize> State<C, N> {
                 report_bus_errors: false,
                 bus_error: None,
                 error_waker: None,
+                warning: Warning::new(),
                 single_shot: false,
                 watching: false,
                 counts: Counts {
@@ -279,8 +322,9 @@ impl<T: Clone, const N: usize> Inner<T, N> {
         }
     }
 
-    /// Reads the protocol status, queuing a change of bus state and noting
-    /// a bus error. Every read of PSR goes through here: reading it resets
+    /// Reads the protocol status, queuing a change of bus state, noting a
+    /// bus error and waking `next_warning_change` when the warning level
+    /// changes. Every read of PSR goes through here: reading it resets
     /// its error codes, which would otherwise be lost.
     ///
     /// On going bus-off the controller enters initialisation and holds its
@@ -299,6 +343,8 @@ impl<T: Clone, const N: usize> Inner<T, N> {
                 }
             }
         }
+        let warning = psr & PSR_EW != 0;
+        self.warning.update(warning);
         let state = bus_state(psr);
         if state == self.bus_state {
             return psr;

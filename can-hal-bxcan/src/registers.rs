@@ -151,12 +151,15 @@ pub(crate) const IER_FMPIE0: u32 = 1 << 1;
 pub(crate) const IER_FOVIE0: u32 = 1 << 3;
 pub(crate) const IER_FMPIE1: u32 = 1 << 4;
 pub(crate) const IER_FOVIE1: u32 = 1 << 6;
+pub(crate) const IER_EWGIE: u32 = 1 << 8;
 pub(crate) const IER_EPVIE: u32 = 1 << 9;
 pub(crate) const IER_BOFIE: u32 = 1 << 10;
 pub(crate) const IER_LECIE: u32 = 1 << 11;
 pub(crate) const IER_ERRIE: u32 = 1 << 15;
 
 // ESR: error status.
+/// Either error counter has reached the warning limit, 96.
+pub(crate) const ESR_EWGF: u32 = 1 << 0;
 pub(crate) const ESR_EPVF: u32 = 1 << 1;
 pub(crate) const ESR_BOFF: u32 = 1 << 2;
 /// The last error code: 0 none, 1 to 6 an error, 7 set by software.
