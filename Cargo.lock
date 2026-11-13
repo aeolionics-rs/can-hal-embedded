@@ -104,6 +104,7 @@ dependencies = [
 [[package]]
 name = "can-hal-rs"
 version = "0.4.3"
+source = "git+https://github.com/aeolionics-rs/can-hal-rs?branch=aeolionics#102307cd89f186a71b4f4d48f7d7c004355f8702"
 
 [[package]]
 name = "cc"

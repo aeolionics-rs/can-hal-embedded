@@ -19,7 +19,7 @@ test = false
 bench = false
 
 [dependencies]
-can-hal = { version = "0.4.3", path = "../../can-hal-rs/can-hal", package = "can-hal-rs", default-features = false }
+can-hal = { version = "0.4.3", git = "https://github.com/aeolionics-rs/can-hal-rs", branch = "aeolionics", package = "can-hal-rs", default-features = false }
 can-hal-fdcan = { path = "../can-hal-fdcan", features = ["defmt"] }
 embassy-stm32 = { version = "0.6.0", features = ["stm32g431kb", "defmt", "memory-x", "time-driver-tim2", "unstable-pac"] }
 embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "executor-thread", "defmt"] }
