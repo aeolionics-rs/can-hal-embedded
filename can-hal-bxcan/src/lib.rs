@@ -45,7 +45,7 @@ use core::future::poll_fn;
 use core::task::Poll;
 use core::time::Duration;
 
-use can_hal::{AbortError, BusState, BusStatistics, BusStatus, CanFrame, ConfirmedTransmit, ErrorCounters, Event, ReceiveEvents, Recover, Statistics, TransmitId, TryTransmitError};
+use can_hal::{AbortError, BusState, BusStatistics, BusStatus, CanFrame, CanId, ConfirmedTransmit, ErrorCounters, Event, Filter, Filterable, ReceiveEvents, Recover, Statistics, TransmitId, TryTransmitError};
 
 pub use state::State;
 pub use timing::BitTiming;
@@ -55,6 +55,8 @@ use registers::{
     BTR_LBKM, BTR_SILM, FMR_FINIT, IER_BOFIE, IER_EPVIE, IER_ERRIE, IER_EWGIE, IER_FMPIE0, IER_FMPIE1, IER_FOVIE0, IER_FOVIE1, IER_LECIE, IER_TMEIE, IR_TXRQ, MCR_INRQ, MCR_NART, MCR_SLEEP, MCR_TTCM, MCR_TXFP, MSR_INAK, MSR_SLAK, RFR_FMP, RFR_FOVR,
     RFR_RFOM, Reg, RegisterBlock, Regs, tsr_abrq, tsr_tme,
 };
+pub use registers::{FILTER_BANKS, MAX_FILTER_BANKS};
+use registers::{FR_EXID_SHIFT, FR_IDE, FR_STID_SHIFT};
 
 /// A source of time for timestamps and timeouts.
 ///
@@ -120,6 +122,11 @@ pub struct Config {
     /// Whether to report each bus error, through [`Can::next_bus_error`].
     /// Off by default: on a faulty bus there can be thousands a second.
     pub bus_errors: bool,
+    /// How many filter banks the channel uses, each in 32-bit mask mode on
+    /// FIFO 0 and holding one live filter ([`Filterable`]): 1 to
+    /// [`MAX_FILTER_BANKS`], as many as the part has; with none,
+    /// [`FILTER_BANKS`].
+    pub filter_banks: Option<usize>,
 }
 
 impl Config {
@@ -131,7 +138,15 @@ impl Config {
             mode: Mode::Normal,
             retransmit: true,
             bus_errors: false,
+            filter_banks: None,
         }
+    }
+
+    /// The same, using `banks` filter banks.
+    #[must_use]
+    pub const fn with_filter_banks(mut self, banks: usize) -> Self {
+        self.filter_banks = Some(banks);
+        self
     }
 
     /// The same, in `mode`.
@@ -215,6 +230,12 @@ pub enum Error {
     InitTimeout,
     /// The [`State`] already serves a channel.
     StateInUse,
+    /// More filters than there are filter banks in use
+    /// ([`Config::with_filter_banks`]): none were applied, and the channel
+    /// accepts everything.
+    TooManyFilters,
+    /// A number of filter banks outside 1 to [`MAX_FILTER_BANKS`].
+    FilterBanksOutOfRange,
 }
 
 impl fmt::Display for Error {
@@ -223,6 +244,8 @@ impl fmt::Display for Error {
             Self::InvalidTiming => "bit timing out of bxCAN's range",
             Self::InitTimeout => "the controller didn't change mode",
             Self::StateInUse => "the state already serves a channel",
+            Self::TooManyFilters => "more filters than filter banks",
+            Self::FilterBanksOutOfRange => "filter banks out of range",
         })
     }
 }
@@ -252,11 +275,14 @@ impl<C: Clock, const N: usize> Can<C, N> {
     ///
     /// # Errors
     ///
-    /// [`Error::InitTimeout`] if the controller doesn't enter initialisation
-    /// mode, and [`Error::StateInUse`] if `state` already serves a channel.
+    /// [`Error::FilterBanksOutOfRange`] for a number of filter banks outside 1
+    /// to [`MAX_FILTER_BANKS`], [`Error::InitTimeout`] if the controller
+    /// doesn't enter initialisation mode, and [`Error::StateInUse`] if
+    /// `state` already serves a channel.
     #[expect(clippy::needless_pass_by_value, reason = "taking the Peripheral is what makes the channel the controller's only user")]
     pub fn new(peripheral: Peripheral, state: &'static State<C, N>, config: Config) -> Result<Self, Error> {
         let Peripheral(regs) = peripheral;
+        let banks = filter_banks(&config)?;
         let r = regs.get();
         initialize(r, config)?;
         state.with(|inner| {
@@ -265,8 +291,10 @@ impl<C: Clock, const N: usize> Can<C, N> {
             }
             inner.regs = Some(regs);
             inner.report_bus_errors = config.bus_errors;
+            inner.filter_banks = banks;
             Ok(())
         })?;
+        lay_out_filters(r, banks);
         r.ier.write(interrupts(config));
         Ok(Self { regs, state })
     }
@@ -292,9 +320,11 @@ impl<C: Clock, const N: usize> Can<C, N> {
     /// [`Error::InitTimeout`] if the controller doesn't enter initialisation
     /// mode.
     pub fn reinitialize(&mut self, config: Config) -> Result<(), Error> {
+        let banks = filter_banks(&config)?;
         let r = self.registers();
         r.ier.write(0);
         initialize(r, config)?;
+        self.set_filter_banks(banks);
         for fifo in &r.rfr {
             release_all(fifo);
         }
@@ -351,8 +381,10 @@ impl<C: Clock, const N: usize> Can<C, N> {
     /// [`Error::InitTimeout`] if the controller doesn't enter initialisation
     /// mode.
     pub fn reconfigure(&mut self, config: Config) -> Result<(), Error> {
+        let banks = filter_banks(&config)?;
         self.stop()?;
         configure(self.registers(), config);
+        self.set_filter_banks(banks);
         self.registers().ier.write(interrupts(config));
         self.state.with(|inner| {
             inner.report_bus_errors = config.bus_errors;
@@ -361,6 +393,19 @@ impl<C: Clock, const N: usize> Can<C, N> {
             inner.warning.forget();
         });
         Ok(())
+    }
+
+    /// Records the filter banks for a configuration: the filters set stay if
+    /// the number doesn't change, and the banks are laid out afresh
+    /// (everything accepted) if it does.
+    fn set_filter_banks(&self, banks: usize) {
+        let r = self.registers();
+        self.state.with(|inner| {
+            if inner.filter_banks != banks {
+                inner.filter_banks = banks;
+                lay_out_filters(r, banks);
+            }
+        });
     }
 
     /// Leaves initialisation mode. The controller joins the bus once it has
@@ -452,25 +497,73 @@ const fn interrupts(config: Config) -> u32 {
     if config.bus_errors { base | IER_LECIE } else { base }
 }
 
-/// Writes `config` to the controller, which must be in initialisation mode.
-/// Takes the controller out of sleep into initialisation mode, configures
-/// it, and sets filter bank 0 to a 32-bit mask of 0, passing everything to
-/// FIFO 0.
+/// Takes the controller out of sleep into initialisation mode and
+/// configures it; the filters stay as they are.
 fn initialize(r: &RegisterBlock, config: Config) -> Result<(), Error> {
     r.mcr.modify(|mcr| (mcr & !MCR_SLEEP) | MCR_INRQ);
     wait_for(r, MSR_INAK | MSR_SLAK, MSR_INAK)?;
     configure(r, config);
-
-    r.fmr.modify(|fmr| fmr | FMR_FINIT);
-    r.fa1r.modify(|v| v & !1);
-    r.fm1r.modify(|v| v & !1);
-    r.fs1r.modify(|v| v | 1);
-    r.ffa1r.modify(|v| v & !1);
-    r.filter[0].fr1.write(0);
-    r.filter[0].fr2.write(0);
-    r.fa1r.modify(|v| v | 1);
-    r.fmr.modify(|fmr| fmr & !FMR_FINIT);
     Ok(())
+}
+
+/// The filter banks `config` asks for, checked.
+fn filter_banks(config: &Config) -> Result<usize, Error> {
+    let banks = config.filter_banks.unwrap_or(FILTER_BANKS);
+    if banks == 0 || banks > MAX_FILTER_BANKS {
+        return Err(Error::FilterBanksOutOfRange);
+    }
+    Ok(banks)
+}
+
+/// The first `banks` banks' bits in the filter registers.
+const fn bank_bits(banks: usize) -> u32 {
+    if banks >= 32 { u32::MAX } else { (1 << banks) - 1 }
+}
+
+/// Lays out the first `banks` filter banks, in filter initialisation mode:
+/// each in 32-bit mask mode (`FS1R` set, `FM1R` clear) on FIFO 0 (`FFA1R`
+/// clear), then accepting everything. Scale, mode and FIFO can change only
+/// here; a bank's identifier and mask can change at any time while the bank
+/// is off.
+fn lay_out_filters(r: &RegisterBlock, banks: usize) {
+    let bits = bank_bits(banks);
+    r.fmr.modify(|fmr| fmr | FMR_FINIT);
+    r.fa1r.modify(|v| v & !bits);
+    r.fm1r.modify(|v| v & !bits);
+    r.fs1r.modify(|v| v | bits);
+    r.ffa1r.modify(|v| v & !bits);
+    r.fmr.modify(|fmr| fmr & !FMR_FINIT);
+    accept_all(r, banks);
+}
+
+/// A filter as a 32-bit mask bank's identifier and mask registers: the
+/// identifier in place, and IDE compared, so a filter for one identifier
+/// kind never matches the other; RTR not compared, so remote frames are
+/// filtered like data ones.
+fn bank_values(filter: &Filter) -> (u32, u32) {
+    match filter.id {
+        CanId::Standard(id) => ((u32::from(id) & 0x7FF) << FR_STID_SHIFT, ((filter.mask & 0x7FF) << FR_STID_SHIFT) | FR_IDE),
+        CanId::Extended(id) => (((id & 0x1FFF_FFFF) << FR_EXID_SHIFT) | FR_IDE, ((filter.mask & 0x1FFF_FFFF) << FR_EXID_SHIFT) | FR_IDE),
+    }
+}
+
+/// Writes `filters` into the first `banks` banks, one each, the rest off:
+/// each bank off while its values change.
+fn write_filters(r: &RegisterBlock, banks: usize, filters: &[(u32, u32)]) {
+    for index in 0..banks {
+        let bit = 1 << index;
+        r.fa1r.modify(|v| v & !bit);
+        if let Some(&(fr1, fr2)) = filters.get(index) {
+            r.filter[index].fr1.write(fr1);
+            r.filter[index].fr2.write(fr2);
+            r.fa1r.modify(|v| v | bit);
+        }
+    }
+}
+
+/// Bank 0 a mask of 0 (everything passes), the other banks off.
+fn accept_all(r: &RegisterBlock, banks: usize) {
+    write_filters(r, banks, &[(0, 0)]);
 }
 
 /// Releases every frame waiting in a receive FIFO (three at most), each once
@@ -590,6 +683,46 @@ impl<C: Clock, const N: usize> ReceiveEvents<CanFrame> for Can<C, N> {
             }
             core::hint::spin_loop();
         }
+    }
+}
+
+/// Live acceptance filtering, exact or not at all: each [`Filter`] takes one
+/// 32-bit mask filter bank, of the banks in use
+/// ([`Config::with_filter_banks`]); more filters than banks is
+/// [`Error::TooManyFilters`], never a merge into something broader. A frame
+/// passes if it matches any filter, so with filters of one identifier kind
+/// only, frames of the other kind are all rejected. Remote frames are
+/// filtered like data frames.
+///
+/// The banks change one at a time while the channel runs, each off while
+/// its values change, so the channel stays on the bus: a frame arriving
+/// during the change meets some mix of the old filters and the new.
+impl<C: Clock, const N: usize> Filterable for Can<C, N> {
+    type Error = Error;
+
+    fn set_filters(&mut self, filters: &[Filter]) -> Result<(), Error> {
+        let r = self.registers();
+        let banks = self.state.with(|inner| inner.filter_banks);
+        if filters.is_empty() {
+            accept_all(r, banks);
+            return Ok(());
+        }
+        if filters.len() > banks {
+            accept_all(r, banks);
+            return Err(Error::TooManyFilters);
+        }
+        let mut values = [(0, 0); MAX_FILTER_BANKS];
+        for (value, filter) in values.iter_mut().zip(filters) {
+            *value = bank_values(filter);
+        }
+        write_filters(r, banks, &values[..filters.len()]);
+        Ok(())
+    }
+
+    fn clear_filters(&mut self) -> Result<(), Error> {
+        let banks = self.state.with(|inner| inner.filter_banks);
+        accept_all(self.registers(), banks);
+        Ok(())
     }
 }
 

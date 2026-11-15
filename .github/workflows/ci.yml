@@ -43,6 +43,8 @@ jobs:
       - run: rustup toolchain install
       - run: cargo clippy -p nucleo-g431kb --target thumbv7em-none-eabihf -- -D warnings
       - run: cargo build -p nucleo-g431kb --target thumbv7em-none-eabihf
+      - run: cargo clippy -p disco-f072b --target thumbv6m-none-eabi -- -D warnings
+      - run: cargo build -p disco-f072b --target thumbv6m-none-eabi
 
   checks:
     runs-on: ubuntu-latest

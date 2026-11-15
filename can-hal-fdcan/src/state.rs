@@ -41,6 +41,8 @@ pub(crate) struct Inner<T, const N: usize> {
     /// watching for one to be marked failed.
     pub(crate) single_shot: bool,
     pub(crate) watching: bool,
+    /// The filter list lengths in use: standard, extended.
+    pub(crate) filter_lists: (usize, usize),
 }
 
 /// Whether an error counter is at the warning level, as last read and as
@@ -139,6 +141,7 @@ impl<C: Clock, const N: usize> State<C, N> {
                 warning: Warning::new(),
                 single_shot: false,
                 watching: false,
+                filter_lists: (0, 0),
                 counts: Counts {
                     rx_frames: 0,
                     tx_frames: 0,
