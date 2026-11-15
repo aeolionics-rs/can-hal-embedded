@@ -34,6 +34,8 @@ pub(crate) struct Inner<T, const N: usize> {
     pub(crate) counts: Counts,
     /// Whether bus errors are reported, and the latest not yet taken.
     pub(crate) report_bus_errors: bool,
+    /// The filter banks in use.
+    pub(crate) filter_banks: usize,
     pub(crate) bus_error: Option<BusError>,
     pub(crate) error_waker: Option<Waker>,
     pub(crate) warning: Warning,
@@ -124,6 +126,7 @@ impl<C: Clock, const N: usize> State<C, N> {
                 bus_state: BusState::ErrorActive,
                 waker: None,
                 report_bus_errors: false,
+                filter_banks: 0,
                 bus_error: None,
                 error_waker: None,
                 warning: Warning::new(),

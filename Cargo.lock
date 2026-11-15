@@ -270,6 +270,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "disco-f072b"
+version = "0.1.0"
+dependencies = [
+ "can-hal-bxcan",
+ "can-hal-rs",
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 1.2.0",
+ "defmt-rtt",
+ "embassy-executor",
+ "embassy-stm32",
+ "embassy-time",
+ "panic-probe",
+]
+
+[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

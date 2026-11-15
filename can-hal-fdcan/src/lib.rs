@@ -49,7 +49,7 @@ use core::future::poll_fn;
 use core::task::Poll;
 use core::time::Duration;
 
-use can_hal::{AbortError, BusState, BusStatistics, BusStatus, CanFrame, ConfirmedTransmit, ErrorCounters, Event, Frame, ReceiveEvents, Recover, Statistics, TransmitId, TryTransmitError};
+use can_hal::{AbortError, BusState, BusStatistics, BusStatus, CanFrame, CanId, ConfirmedTransmit, ErrorCounters, Event, Filter, Filterable, Frame, ReceiveEvents, Recover, Statistics, TransmitId, TryTransmitError};
 
 pub use state::State;
 pub use timing::BitTiming;
@@ -59,6 +59,8 @@ use registers::{
     CCCR_BRSE, CCCR_CCE, CCCR_DAR, CCCR_FDOE, CCCR_INIT, CCCR_MON, CCCR_TEST, DBTP_TDC, ECR_RP, H1_MM_SHIFT, ILE_EINT0, IR_BO, IR_EP, IR_EW, IR_PEA, IR_PED, IR_RF0L, IR_RF0N, IR_TCF, IR_TEFN, MessageRam, PSR_ACT_MASK, RegisterBlock, Regs, T1_EFC,
     TEST_LBCK, TOCC_ETOC, TOCC_TOP_SHIFT, TSCC_TSS_INTERNAL, TXFQS_TFQF, TXFQS_TFQPI_SHIFT,
 };
+use registers::{EFEC_FIFO0, EFT_CLASSIC, RXGFC_ANFE_REJECT, RXGFC_ANFS_REJECT, RXGFC_LSE_SHIFT, RXGFC_LSS_SHIFT, SFEC_FIFO0, SFID1_SHIFT, SFT_CLASSIC};
+pub use registers::{EXTENDED_FILTERS, STANDARD_FILTERS};
 
 /// A source of time for timestamps and timeouts.
 ///
@@ -123,6 +125,11 @@ pub struct Config {
     /// The data phase's timing, for FD frames with bit-rate switching. With
     /// none, the channel sends and receives classic frames only.
     pub data: Option<BitTiming>,
+    /// How many standard and extended filter elements to use, at most
+    /// [`STANDARD_FILTERS`] and [`EXTENDED_FILTERS`]; with none, all of
+    /// them. A list of length 0 can't filter its identifier kind, whose
+    /// frames are then all accepted.
+    pub filter_lists: Option<(usize, usize)>,
     /// The mode.
     pub mode: Mode,
     /// Whether the controller retries a frame until it is sent (the CAN
@@ -145,6 +152,7 @@ impl Config {
         Self {
             nominal,
             data: None,
+            filter_lists: None,
             mode: Mode::Normal,
             retransmit: true,
             bus_errors: false,
@@ -156,6 +164,15 @@ impl Config {
     #[must_use]
     pub const fn with_data(mut self, data: BitTiming) -> Self {
         self.data = Some(data);
+        self
+    }
+
+    /// The same, with `standard` and `extended` filter elements in use: the
+    /// live filters [`Filterable`] can set, and how many elements the
+    /// controller scans per frame.
+    #[must_use]
+    pub const fn with_filter_lists(mut self, standard: usize, extended: usize) -> Self {
+        self.filter_lists = Some((standard, extended));
         self
     }
 
@@ -231,6 +248,13 @@ pub enum Error {
     StateInUse,
     /// An FD frame, on a channel configured without a data phase.
     FdDisabled,
+    /// More filters of one identifier kind than its list holds
+    /// ([`Config::with_filter_lists`]): none were applied, and the channel
+    /// accepts everything.
+    TooManyFilters,
+    /// Filter lists longer than the message RAM has room for
+    /// ([`STANDARD_FILTERS`], [`EXTENDED_FILTERS`]).
+    FilterListsTooLong,
 }
 
 impl fmt::Display for Error {
@@ -240,6 +264,8 @@ impl fmt::Display for Error {
             Self::InitTimeout => "the controller didn't change mode",
             Self::StateInUse => "the state already serves a channel",
             Self::FdDisabled => "an FD frame on a classic channel",
+            Self::TooManyFilters => "more filters than the filter list holds",
+            Self::FilterListsTooLong => "filter lists longer than the message RAM holds",
         })
     }
 }
@@ -278,11 +304,14 @@ impl<C: Clock, const N: usize> Can<C, N> {
     ///
     /// # Errors
     ///
-    /// [`Error::InitTimeout`] if the controller doesn't enter initialisation,
-    /// and [`Error::StateInUse`] if `state` already serves a channel.
+    /// [`Error::FilterListsTooLong`] for filter lists longer than the message
+    /// RAM's, [`Error::InitTimeout`] if the controller doesn't enter
+    /// initialisation, and [`Error::StateInUse`] if `state` already serves a
+    /// channel.
     #[expect(clippy::needless_pass_by_value, reason = "taking the Peripheral is what makes the channel the controller's only user")]
     pub fn new(peripheral: Peripheral, state: &'static State<C, N>, config: Config) -> Result<Self, Error> {
         let Peripheral(regs) = peripheral;
+        let lists = filter_lists(&config)?;
         let r = regs.get();
         enter_init(r)?;
         state.with(|inner| {
@@ -292,9 +321,12 @@ impl<C: Clock, const N: usize> Can<C, N> {
             inner.regs = Some(regs);
             inner.report_bus_errors = config.bus_errors;
             inner.single_shot = !config.retransmit;
+            inner.filter_lists = lists;
             Ok(())
         })?;
-        configure(r, regs.ram(), config);
+        zero_filters(regs.ram());
+        accept_all(regs.ram(), lists);
+        configure(r, regs.ram(), config, lists);
         Ok(Self { regs, state })
     }
 
@@ -342,10 +374,14 @@ impl<C: Clock, const N: usize> Can<C, N> {
     ///
     /// # Errors
     ///
-    /// [`Error::InitTimeout`] if the controller doesn't enter initialisation.
+    /// [`Error::FilterListsTooLong`] for filter lists longer than the message
+    /// RAM's, [`Error::InitTimeout`] if the controller doesn't enter
+    /// initialisation.
     pub fn reconfigure(&mut self, config: Config) -> Result<(), Error> {
+        let lists = filter_lists(&config)?;
         self.stop()?;
-        configure(self.registers(), self.regs.ram(), config);
+        self.set_filter_lists(lists);
+        configure(self.registers(), self.regs.ram(), config, lists);
         self.state.with(|inner| {
             inner.report_bus_errors = config.bus_errors;
             inner.single_shot = !config.retransmit;
@@ -372,8 +408,11 @@ impl<C: Clock, const N: usize> Can<C, N> {
     ///
     /// # Errors
     ///
-    /// [`Error::InitTimeout`] if the controller doesn't enter initialisation.
+    /// [`Error::FilterListsTooLong`] for filter lists longer than the message
+    /// RAM's, [`Error::InitTimeout`] if the controller doesn't enter
+    /// initialisation.
     pub fn reinitialize(&mut self, config: Config) -> Result<(), Error> {
+        let lists = filter_lists(&config)?;
         let r = self.registers();
         r.ie.write(0);
         enter_init(r)?;
@@ -387,8 +426,22 @@ impl<C: Clock, const N: usize> Can<C, N> {
             inner.bus_state = BusState::ErrorActive;
             inner.warning.forget();
         });
-        configure(r, self.regs.ram(), config);
+        self.set_filter_lists(lists);
+        configure(r, self.regs.ram(), config, lists);
         Ok(())
+    }
+
+    /// Records the filter list lengths for a configuration: the filters set
+    /// stay if the lengths don't change, and are cleared (everything
+    /// accepted) if they do.
+    fn set_filter_lists(&self, lists: (usize, usize)) {
+        let ram = self.regs.ram();
+        self.state.with(|inner| {
+            if inner.filter_lists != lists {
+                inner.filter_lists = lists;
+                accept_all(ram, lists);
+            }
+        });
     }
 
     /// Leaves initialisation. The controller joins the bus once it has seen
@@ -507,7 +560,16 @@ const fn interrupts(config: Config) -> u32 {
 
 /// Writes `config` to the controller, which must be in initialisation, and
 /// clears its message RAM.
-fn configure(r: &RegisterBlock, ram: &MessageRam, config: Config) {
+/// The filter list lengths `config` asks for, checked against the RAM.
+fn filter_lists(config: &Config) -> Result<(usize, usize), Error> {
+    let lists = config.filter_lists.unwrap_or((STANDARD_FILTERS, EXTENDED_FILTERS));
+    if lists.0 > STANDARD_FILTERS || lists.1 > EXTENDED_FILTERS {
+        return Err(Error::FilterListsTooLong);
+    }
+    Ok(lists)
+}
+
+fn configure(r: &RegisterBlock, ram: &MessageRam, config: Config, lists: (usize, usize)) {
     r.cccr.modify(|cccr| cccr | CCCR_CCE);
     clear(ram);
 
@@ -536,8 +598,16 @@ fn configure(r: &RegisterBlock, ram: &MessageRam, config: Config) {
         }
     }
 
-    // No filters: everything into FIFO 0, which keeps the oldest when full.
-    r.rxgfc.write(0);
+    // The filter lists at the lengths configured, frames matching none
+    // rejected: with no filters set, each list's first element accepts
+    // everything (see `accept_all`), so changing them never needs
+    // initialisation. A kind with no list isn't filtered: its frames are all
+    // accepted. FIFO 0 keeps the oldest when full.
+    #[expect(clippy::cast_possible_truncation, reason = "at most 28")]
+    let (standard, extended) = (lists.0 as u32, lists.1 as u32);
+    let standard_policy = if lists.0 > 0 { RXGFC_ANFS_REJECT } else { 0 };
+    let extended_policy = if lists.1 > 0 { RXGFC_ANFE_REJECT } else { 0 };
+    r.rxgfc.write((standard << RXGFC_LSS_SHIFT) | (extended << RXGFC_LSE_SHIFT) | standard_policy | extended_policy);
     // Stamps count bit times, and so does the timeout counter, which
     // single-shot frames need.
     r.tscc.write(TSCC_TSS_INTERNAL);
@@ -553,14 +623,50 @@ fn configure(r: &RegisterBlock, ram: &MessageRam, config: Config) {
     r.ir.write(u32::MAX);
 }
 
-/// Zeroes the message RAM, whose contents are undefined after power-on.
+/// Zeroes the filter lists, whose contents are undefined after power-on.
+fn zero_filters(ram: &MessageRam) {
+    for word in ram.standard_filters.iter().chain(&ram.extended_filters) {
+        word.write(0);
+    }
+}
+
+/// A standard filter element storing frames that match in FIFO 0.
+fn standard_element(id: u16, mask: u32) -> u32 {
+    SFT_CLASSIC | SFEC_FIFO0 | (u32::from(id & 0x7FF) << SFID1_SHIFT) | (mask & 0x7FF)
+}
+
+/// Writes the filter lists, `lists` long: `filters` in order, the rest
+/// disabled.
+fn write_filters(ram: &MessageRam, lists: (usize, usize), filters: &[Filter]) {
+    let mut standard = filters.iter().filter_map(|f| match f.id {
+        CanId::Standard(id) => Some(standard_element(id, f.mask)),
+        CanId::Extended(_) => None,
+    });
+    for word in ram.standard_filters.iter().take(lists.0) {
+        word.write(standard.next().unwrap_or(0));
+    }
+    let mut extended = filters.iter().filter_map(|f| match f.id {
+        CanId::Extended(id) => Some((EFEC_FIFO0 | (id & 0x1FFF_FFFF), EFT_CLASSIC | (f.mask & 0x1FFF_FFFF))),
+        CanId::Standard(_) => None,
+    });
+    for element in ram.extended_filters.chunks(2).take(lists.1) {
+        let (f0, f1) = extended.next().unwrap_or((0, 0));
+        // The element's enable (EFEC) last on, first off.
+        element[0].write(0);
+        element[1].write(f1);
+        element[0].write(f0);
+    }
+}
+
+/// Filter lists that accept every frame: each list's first element matches
+/// everything (a mask of 0), the rest are disabled.
+fn accept_all(ram: &MessageRam, lists: (usize, usize)) {
+    write_filters(ram, lists, &[Filter::new(CanId::Standard(0), 0), Filter::new(CanId::Extended(0), 0)]);
+}
+
+/// Zeroes the message RAM's frame sections, whose contents are undefined
+/// after power-on; the filter lists stay as set.
 fn clear(ram: &MessageRam) {
-    for word in &ram.standard_filters {
-        word.write(0);
-    }
-    for word in &ram.extended_filters {
-        word.write(0);
-    }
     for element in ram.rx_fifo.iter().flatten().chain(&ram.tx_buffers) {
         for word in element.header.iter().chain(&element.data) {
             word.write(0);
@@ -663,6 +769,43 @@ impl<C: Clock, const N: usize> ReceiveEvents<Frame> for Can<C, N> {
             }
             core::hint::spin_loop();
         }
+    }
+}
+
+/// Live acceptance filtering, exact or not at all: each [`Filter`] becomes
+/// one classic (identifier and mask) filter element, up to the list lengths
+/// configured ([`Config::with_filter_lists`]; by default all 28 standard and
+/// 8 extended); more of a kind is [`Error::TooManyFilters`], never a merge
+/// into something broader. A frame passes if it matches any filter, so with
+/// filters of one kind only, frames of the other kind are all rejected
+/// (unless that kind has no list, and so isn't filtered). Remote frames are
+/// filtered like data frames, FD frames like classic ones.
+///
+/// The lists change in message RAM while the channel runs, so the channel
+/// stays on the bus: frames arriving during the change meet the old filters
+/// or the new. The list lengths themselves are set at configuration.
+impl<C: Clock, const N: usize> Filterable for Can<C, N> {
+    type Error = Error;
+
+    fn set_filters(&mut self, filters: &[Filter]) -> Result<(), Error> {
+        let ram = self.regs.ram();
+        let lists = self.state.with(|inner| inner.filter_lists);
+        let standard = filters.iter().filter(|f| matches!(f.id, CanId::Standard(_))).count();
+        if filters.is_empty() {
+            accept_all(ram, lists);
+        } else if standard > lists.0 || filters.len() - standard > lists.1 {
+            accept_all(ram, lists);
+            return Err(Error::TooManyFilters);
+        } else {
+            write_filters(ram, lists, filters);
+        }
+        Ok(())
+    }
+
+    fn clear_filters(&mut self) -> Result<(), Error> {
+        let lists = self.state.with(|inner| inner.filter_lists);
+        accept_all(self.regs.ram(), lists);
+        Ok(())
     }
 }
 

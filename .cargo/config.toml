@@ -11,10 +11,16 @@ run-fdcan-dar = ["run", "--config", "env.PROBE_RS_PROBE='0483:374e'", "-p", "nuc
 run-fdcan-reset = ["run", "--config", "env.PROBE_RS_PROBE='0483:374e'", "-p", "nucleo-g431kb", "--target", "thumbv7em-none-eabihf", "--bin", "reset"]
 run-fdcan-warning = ["run", "--config", "env.PROBE_RS_PROBE='0483:374e'", "-p", "nucleo-g431kb", "--target", "thumbv7em-none-eabihf", "--bin", "warning"]
 clippy-fdcan-bench ="clippy -p nucleo-g431kb --target thumbv7em-none-eabihf"
+# can-hal-bxcan's on the 32F072BDISCOVERY (its ST-LINK/V2 is 0483:3748).
+run-bxcan-loopback = ["run", "--config", "env.PROBE_RS_PROBE='0483:3748'", "-p", "disco-f072b", "--target", "thumbv6m-none-eabi", "--bin", "loopback"]
+clippy-bxcan-bench = "clippy -p disco-f072b --target thumbv6m-none-eabi"
 
 # The G431 sleeps in the executor's idle, where the probe can't attach.
 [target.thumbv7em-none-eabihf]
 runner = "probe-rs run --chip STM32G431KB --connect-under-reset"
+
+[target.thumbv6m-none-eabi]
+runner = "probe-rs run --chip STM32F072RB --connect-under-reset"
 
 [env]
 DEFMT_LOG = "debug"

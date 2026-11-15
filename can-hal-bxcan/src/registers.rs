@@ -183,3 +183,16 @@ pub(crate) const IR_IDE: u32 = 1 << 2;
 
 // FMR: filter master.
 pub(crate) const FMR_FINIT: u32 = 1 << 0;
+
+/// Filter banks a single-CAN part has (the F0's, the F3's): the default
+/// for [`Config::with_filter_banks`](crate::Config::with_filter_banks).
+pub const FILTER_BANKS: usize = 14;
+/// The most any part has (dual-CAN parts share 28 between the two).
+pub const MAX_FILTER_BANKS: usize = 28;
+
+// A bank's registers in 32-bit scale: STID bits 31:21, EXID bits 20:3 (with
+// STID, the extended identifier's 29 bits from bit 3), IDE bit 2, RTR bit 1;
+// FR1 the identifier, FR2 the mask (in mask mode).
+pub(crate) const FR_STID_SHIFT: u32 = 21;
+pub(crate) const FR_EXID_SHIFT: u32 = 3;
+pub(crate) const FR_IDE: u32 = 1 << 2;

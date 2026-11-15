@@ -101,8 +101,8 @@ const _: () = {
 /// words, and three 18-word transmit buffers.
 #[repr(C)]
 pub(crate) struct MessageRam {
-    pub(crate) standard_filters: [Reg; 28],
-    pub(crate) extended_filters: [Reg; 16],
+    pub(crate) standard_filters: [Reg; STANDARD_FILTERS],
+    pub(crate) extended_filters: [Reg; 2 * EXTENDED_FILTERS],
     pub(crate) rx_fifo: [[Element; 3]; 2],
     pub(crate) tx_events: [[Reg; 2]; 3],
     pub(crate) tx_buffers: [Element; 3],
@@ -227,3 +227,28 @@ pub(crate) const H1_BRS: u32 = 1 << 20;
 pub(crate) const H1_FDF: u32 = 1 << 21;
 pub(crate) const T1_EFC: u32 = 1 << 23;
 pub(crate) const H1_MM_SHIFT: u32 = 24;
+
+/// Standard (11-bit) filter elements the message RAM has room for, one word
+/// each: fixed by ST's FDCAN.
+pub const STANDARD_FILTERS: usize = 28;
+/// Extended (29-bit) filter elements it has room for, two words each.
+pub const EXTENDED_FILTERS: usize = 8;
+
+// RXGFC: the standard list's length (LSS, bits 20:16) and the extended
+// one's (LSE, bits 27:24); standard (ANFS) and extended (ANFE) frames that
+// match no filter rejected (2; 0 accepts them into FIFO 0); remote frames
+// filtered like data ones (RRFS, RRFE 0); FIFO 0 keeps the oldest when full
+// (F0OM 0).
+pub(crate) const RXGFC_LSS_SHIFT: u32 = 16;
+pub(crate) const RXGFC_LSE_SHIFT: u32 = 24;
+pub(crate) const RXGFC_ANFS_REJECT: u32 = 0b10 << 4;
+pub(crate) const RXGFC_ANFE_REJECT: u32 = 0b10 << 2;
+// A standard filter element: SFT classic (2, filter and mask), SFEC (0
+// disabled, 1 store in FIFO 0), SFID1 the identifier, SFID2 the mask.
+pub(crate) const SFT_CLASSIC: u32 = 0b10 << 30;
+pub(crate) const SFEC_FIFO0: u32 = 1 << 27;
+pub(crate) const SFID1_SHIFT: u32 = 16;
+// An extended filter element: word 0 EFEC (0 disabled, 1 store in FIFO 0)
+// and EFID1 the identifier; word 1 EFT classic (2) and EFID2 the mask.
+pub(crate) const EFEC_FIFO0: u32 = 1 << 29;
+pub(crate) const EFT_CLASSIC: u32 = 0b10 << 30;
