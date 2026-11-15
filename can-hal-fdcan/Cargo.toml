@@ -10,9 +10,12 @@ categories = ["embedded", "hardware-support", "no-std"]
 publish = false
 
 [features]
-defmt = ["dep:defmt"]
+defmt = ["dep:defmt", "can-common/defmt"]
 
 [dependencies]
+# What CAN drivers share: transmit ordering, the event queue, the bit-timing
+# solver, Clock.
+can-common = { version = "0.1.0", git = "https://github.com/aeolionics-rs/can-common" }
 # Our fork's `aeolionics` branch, for the confirmed-transmission traits.
 can-hal = { version = "0.4.3", git = "https://github.com/aeolionics-rs/can-hal-rs", branch = "aeolionics", package = "can-hal-rs", default-features = false }
 critical-section = "1.2.0"

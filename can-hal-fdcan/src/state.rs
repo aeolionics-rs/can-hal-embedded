@@ -6,15 +6,17 @@
 //! outstanding transmissions and the counts, behind a critical section.
 
 use core::cell::RefCell;
-use core::task::{Context, Poll, Waker};
+use core::task::Waker;
 
 use can_hal::{BusState, Event, Frame, Timestamped, TransmitId};
 use critical_section::Mutex;
 
 use crate::frame::{self, Element};
-use crate::order::{MAILBOXES, Outstanding, Queue};
+use crate::order::{MAILBOXES, Outstanding, outcome};
 use crate::registers::{self, IR_PEA, IR_PED, IR_RF0L, IR_TOO, PSR_BO, PSR_DLEC_SHIFT, PSR_EP, PSR_EW, PSR_LEC_SHIFT, RXFS_FFL_MASK, RXFS_FGI_SHIFT, RegisterBlock, Regs, TXEFS_EFFL_MASK, TXEFS_EFGI_SHIFT};
 use crate::{BusError, Clock};
+use can_common::queue::Queue;
+use can_common::{Counts, Warning};
 
 /// The state a [`Can`](crate::Can) channel shares with its interrupt handler,
 /// with room for `N` events. Declare one per controller as a `static`, give it
@@ -43,58 +45,6 @@ pub(crate) struct Inner<T, const N: usize> {
     pub(crate) watching: bool,
     /// The filter list lengths in use: standard, extended.
     pub(crate) filter_lists: (usize, usize),
-}
-
-/// Whether an error counter is at the warning level, as last read and as
-/// last taken by `next_warning_change`, and who waits for it to change.
-pub(crate) struct Warning {
-    now: bool,
-    taken: bool,
-    waker: Option<Waker>,
-}
-
-impl Warning {
-    pub(crate) const fn new() -> Self {
-        Self { now: false, taken: false, waker: None }
-    }
-
-    /// Notes the level as read, waking the waiter on a change.
-    pub(crate) fn update(&mut self, now: bool) {
-        if now != self.now {
-            self.now = now;
-            if let Some(waker) = self.waker.take() {
-                waker.wake();
-            }
-        }
-    }
-
-    /// The level once it differs from the one last taken; otherwise waits.
-    pub(crate) fn poll_change(&mut self, cx: &Context<'_>) -> Poll<bool> {
-        if self.now == self.taken {
-            self.waker = Some(cx.waker().clone());
-            Poll::Pending
-        } else {
-            self.taken = self.now;
-            Poll::Ready(self.now)
-        }
-    }
-
-    /// Forgets the level, as after a reset, without waking the waiter.
-    pub(crate) fn forget(&mut self) {
-        self.now = false;
-        self.taken = false;
-    }
-}
-
-/// Running counts for [`Statistics`](can_hal::Statistics).
-#[derive(Default, Clone, Copy)]
-pub(crate) struct Counts {
-    pub(crate) rx_frames: u32,
-    pub(crate) tx_frames: u32,
-    pub(crate) rx_dropped: u32,
-    pub(crate) rx_overruns: u32,
-    pub(crate) tx_failed: u32,
-    pub(crate) bus_errors: u32,
 }
 
 /// Something that happened, with the bit-time stamp of its start of frame.
@@ -142,14 +92,7 @@ impl<C: Clock, const N: usize> State<C, N> {
                 single_shot: false,
                 watching: false,
                 filter_lists: (0, 0),
-                counts: Counts {
-                    rx_frames: 0,
-                    tx_frames: 0,
-                    rx_dropped: 0,
-                    rx_overruns: 0,
-                    tx_failed: 0,
-                    bus_errors: 0,
-                },
+                counts: Counts::new(),
             })),
         }
     }
@@ -306,7 +249,8 @@ impl<T: Clone, const N: usize> Inner<T, N> {
 
     /// Queues the reports of the transmissions that are next in order.
     fn push_reports(&mut self) {
-        while let Some((id, outcome)) = self.outstanding.pop_report() {
+        while let Some((id, done)) = self.outstanding.pop_report() {
+            let outcome = outcome(done);
             if matches!(outcome, can_hal::Outcome::Failed(_)) {
                 self.counts.tx_failed += 1;
             }

@@ -50,7 +50,8 @@ use can_hal::{AbortError, BusState, BusStatistics, BusStatus, CanFrame, CanId, C
 pub use state::State;
 pub use timing::BitTiming;
 
-use order::{MAILBOXES, Outstanding, Queue};
+use can_common::queue::Queue;
+use order::{MAILBOXES, Outstanding};
 use registers::{
     BTR_LBKM, BTR_SILM, FMR_FINIT, IER_BOFIE, IER_EPVIE, IER_ERRIE, IER_EWGIE, IER_FMPIE0, IER_FMPIE1, IER_FOVIE0, IER_FOVIE1, IER_LECIE, IER_TMEIE, IR_TXRQ, MCR_INRQ, MCR_NART, MCR_SLEEP, MCR_TTCM, MCR_TXFP, MSR_INAK, MSR_SLAK, RFR_FMP, RFR_FOVR,
     RFR_RFOM, Reg, RegisterBlock, Regs, tsr_abrq, tsr_tme,
@@ -58,20 +59,7 @@ use registers::{
 pub use registers::{FILTER_BANKS, MAX_FILTER_BANKS};
 use registers::{FR_EXID_SHIFT, FR_IDE, FR_STID_SHIFT};
 
-/// A source of time for timestamps and timeouts.
-///
-/// Its [`now`](Self::now) is read in the interrupt handler, to stamp the
-/// frames received and the transmissions sent.
-pub trait Clock {
-    /// A point in time.
-    type Instant: Clone + Send + 'static;
-    /// The time now.
-    fn now() -> Self::Instant;
-    /// The time `timeout` from now.
-    fn deadline(timeout: Duration) -> Self::Instant;
-    /// Whether `deadline` has passed.
-    fn has_passed(deadline: &Self::Instant) -> bool;
-}
+pub use can_common::Clock;
 
 /// A bxCAN controller's registers, not yet configured.
 pub struct Peripheral(Regs);

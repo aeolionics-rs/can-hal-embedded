@@ -54,7 +54,8 @@ use can_hal::{AbortError, BusState, BusStatistics, BusStatus, CanFrame, CanId, C
 pub use state::State;
 pub use timing::BitTiming;
 
-use order::{MAILBOXES, Outstanding, Queue};
+use can_common::queue::Queue;
+use order::{MAILBOXES, Outstanding};
 use registers::{
     CCCR_BRSE, CCCR_CCE, CCCR_DAR, CCCR_FDOE, CCCR_INIT, CCCR_MON, CCCR_TEST, DBTP_TDC, ECR_RP, H1_MM_SHIFT, ILE_EINT0, IR_BO, IR_EP, IR_EW, IR_PEA, IR_PED, IR_RF0L, IR_RF0N, IR_TCF, IR_TEFN, MessageRam, PSR_ACT_MASK, RegisterBlock, Regs, T1_EFC,
     TEST_LBCK, TOCC_ETOC, TOCC_TOP_SHIFT, TSCC_TSS_INTERNAL, TXFQS_TFQF, TXFQS_TFQPI_SHIFT,
@@ -62,20 +63,7 @@ use registers::{
 use registers::{EFEC_FIFO0, EFT_CLASSIC, RXGFC_ANFE_REJECT, RXGFC_ANFS_REJECT, RXGFC_LSE_SHIFT, RXGFC_LSS_SHIFT, SFEC_FIFO0, SFID1_SHIFT, SFT_CLASSIC};
 pub use registers::{EXTENDED_FILTERS, STANDARD_FILTERS};
 
-/// A source of time for timestamps and timeouts.
-///
-/// Its [`now`](Self::now) is read in the interrupt handler, to stamp the
-/// frames received and the transmissions sent.
-pub trait Clock {
-    /// A point in time.
-    type Instant: Clone + Send + 'static;
-    /// The time now.
-    fn now() -> Self::Instant;
-    /// The time `timeout` from now.
-    fn deadline(timeout: Duration) -> Self::Instant;
-    /// Whether `deadline` has passed.
-    fn has_passed(deadline: &Self::Instant) -> bool;
-}
+pub use can_common::Clock;
 
 /// An FDCAN controller's registers and message RAM, not yet configured.
 pub struct Peripheral(Regs);

@@ -4,6 +4,7 @@
 
 //! Nominal bit timing: the time quanta of a bit and where it is sampled.
 
+use can_common::timing::Limits;
 use can_hal::SamplePoint;
 
 use crate::Error;
@@ -21,9 +22,8 @@ pub struct BitTiming {
 }
 
 impl BitTiming {
-    /// The fewest and most quanta in a bit that bxCAN allows: 1 + 1 + 1 and
-    /// 1 + 16 + 8.
-    const QUANTA: core::ops::RangeInclusive<u32> = 3..=25;
+    /// BTR's ranges: prescaler 1-1024, seg1 1-16, seg2 1-8, SJW 1-4.
+    const LIMITS: Limits = Limits { prescaler: 1024, seg1: 16, seg2: 8, sjw: 4 };
 
     /// Timing from its fields, checked against bxCAN's ranges: `prescaler`
     /// 1 to 1024, `seg1` 1 to 16 (propagation and phase 1 together), `seg2` 1
@@ -48,26 +48,11 @@ impl BitTiming {
     /// [`Error::InvalidTiming`] when no whole number of quanta divides the
     /// clock into `bitrate`.
     pub fn solve(clock_hz: u32, bitrate: u32, sample_point: SamplePoint) -> Result<Self, Error> {
-        let target = u32::from(sample_point.per_mille());
-        let mut best: Option<(u32, Self)> = None;
-        for quanta in Self::QUANTA.rev() {
-            let Some(cycles) = bitrate.checked_mul(quanta) else { continue };
-            if cycles == 0 || !clock_hz.is_multiple_of(cycles) {
-                continue;
-            }
-            let Ok(prescaler) = u16::try_from(clock_hz / cycles) else { continue };
-            // The sample point is at the end of seg1, `1 + seg1` quanta in.
-            let sample = (quanta * target + 500) / 1000;
-            let (Ok(seg1), Ok(seg2)) = (u8::try_from(sample.saturating_sub(1)), u8::try_from(quanta.saturating_sub(sample))) else {
-                continue;
-            };
-            let Ok(timing) = Self::new(prescaler, seg1, seg2, seg2.min(4)) else { continue };
-            let error = (sample * 1000 / quanta).abs_diff(target);
-            if best.is_none_or(|(best_error, _)| error < best_error) {
-                best = Some((error, timing));
-            }
+        let s = Self::LIMITS.solve(clock_hz, bitrate, sample_point.per_mille()).ok_or(Error::InvalidTiming)?;
+        match (u8::try_from(s.seg1), u8::try_from(s.seg2), u8::try_from(s.sjw)) {
+            (Ok(seg1), Ok(seg2), Ok(sjw)) => Self::new(s.prescaler, seg1, seg2, sjw),
+            _ => Err(Error::InvalidTiming),
         }
-        best.map(|(_, timing)| timing).ok_or(Error::InvalidTiming)
     }
 
     /// Cycles of the clock per quantum.

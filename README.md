@@ -10,6 +10,11 @@ They use the confirmed-transmission traits on our
 [fork](https://github.com/aeolionics-rs/can-hal-rs)'s `aeolionics` branch, a
 git dependency that `Cargo.lock` pins to a commit.
 
+What the drivers share whatever traits they implement (transmit ordering, the
+event queue, the bit-timing solver, `Clock`) comes from
+[can-common](https://github.com/aeolionics-rs/can-common), another git
+dependency.
+
 To build against a local checkout of the fork instead, for changes not yet
 pushed, put a patch in `.cargo/local.toml`, which `.cargo/config.toml`
 includes if it exists and git ignores:
