@@ -6,15 +6,18 @@
 //! outstanding transmissions and the counts, behind a critical section.
 
 use core::cell::RefCell;
-use core::task::{Context, Poll, Waker};
+use core::task::Waker;
 
 use can_hal::{BusState, CanFrame, Event, Timestamped, TransmitId};
 use critical_section::Mutex;
 
 use crate::frame::{self, Words};
-use crate::order::{MAILBOXES, Outstanding, Queue};
+use crate::order::{MAILBOXES, Outstanding, outcome};
 use crate::registers::{ESR_BOFF, ESR_EPVF, ESR_EWGF, ESR_LEC_SHIFT, LEC_SOFTWARE, MSR_ERRI, RFR_FMP, RFR_FOVR, RFR_RFOM, RegisterBlock, Regs, tsr_abrq, tsr_alst, tsr_rqcp, tsr_terr, tsr_txok};
 use crate::{BusError, Clock, FailureCause};
+use can_common::ordering::Finished;
+use can_common::queue::Queue;
+use can_common::{Counts, Warning};
 
 /// The state a [`Can`](crate::Can) channel shares with its interrupt handler,
 /// with room for `N` events. Declare one per controller as a `static`, give it
@@ -43,58 +46,6 @@ pub(crate) struct Inner<T, const N: usize> {
     /// oldest is overwritten.
     causes: [Option<(TransmitId, FailureCause)>; MAILBOXES],
     next_cause: usize,
-}
-
-/// Whether an error counter is at the warning level, as last read and as
-/// last taken by `next_warning_change`, and who waits for it to change.
-pub(crate) struct Warning {
-    now: bool,
-    taken: bool,
-    waker: Option<Waker>,
-}
-
-impl Warning {
-    pub(crate) const fn new() -> Self {
-        Self { now: false, taken: false, waker: None }
-    }
-
-    /// Notes the level as read, waking the waiter on a change.
-    pub(crate) fn update(&mut self, now: bool) {
-        if now != self.now {
-            self.now = now;
-            if let Some(waker) = self.waker.take() {
-                waker.wake();
-            }
-        }
-    }
-
-    /// The level once it differs from the one last taken; otherwise waits.
-    pub(crate) fn poll_change(&mut self, cx: &Context<'_>) -> Poll<bool> {
-        if self.now == self.taken {
-            self.waker = Some(cx.waker().clone());
-            Poll::Pending
-        } else {
-            self.taken = self.now;
-            Poll::Ready(self.now)
-        }
-    }
-
-    /// Forgets the level, as after a reset, without waking the waiter.
-    pub(crate) fn forget(&mut self) {
-        self.now = false;
-        self.taken = false;
-    }
-}
-
-/// Running counts for [`Statistics`](can_hal::Statistics).
-#[derive(Default, Clone, Copy)]
-pub(crate) struct Counts {
-    pub(crate) rx_frames: u32,
-    pub(crate) tx_frames: u32,
-    pub(crate) rx_dropped: u32,
-    pub(crate) rx_overruns: u32,
-    pub(crate) tx_failed: u32,
-    pub(crate) bus_errors: u32,
 }
 
 /// Something that happened, with the bit-time stamp of its start of frame.
@@ -132,14 +83,7 @@ impl<C: Clock, const N: usize> State<C, N> {
                 warning: Warning::new(),
                 causes: [None; MAILBOXES],
                 next_cause: 0,
-                counts: Counts {
-                    rx_frames: 0,
-                    tx_frames: 0,
-                    rx_dropped: 0,
-                    rx_overruns: 0,
-                    tx_failed: 0,
-                    bus_errors: 0,
-                },
+                counts: Counts::new(),
             })),
         }
     }
@@ -238,7 +182,7 @@ impl<T: Clone, const N: usize> Inner<T, N> {
                     if sent {
                         self.counts.tx_frames += 1;
                     }
-                    if let Some((id, true)) = self.outstanding.finish(mailbox, sent.then(|| now.clone()))
+                    if let Some(Finished { id, gave_up: true }) = self.outstanding.finish(mailbox, sent.then(|| now.clone()))
                         && let Some(cause) = cause
                     {
                         self.causes[self.next_cause] = Some((id, cause));
@@ -275,7 +219,8 @@ impl<T: Clone, const N: usize> Inner<T, N> {
 
     /// Queues the reports of the transmissions that are next in order.
     fn push_reports(&mut self) {
-        while let Some((id, outcome)) = self.outstanding.pop_report() {
+        while let Some((id, done)) = self.outstanding.pop_report() {
+            let outcome = outcome(done);
             if matches!(outcome, can_hal::Outcome::Failed(_)) {
                 self.counts.tx_failed += 1;
             }

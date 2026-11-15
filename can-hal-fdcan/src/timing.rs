@@ -5,6 +5,7 @@
 //! Bit timing: the nominal phase, and the data phase of CAN FD frames sent
 //! with bit-rate switching.
 
+use can_common::timing::{Limits, Segments};
 use can_hal::SamplePoint;
 
 use crate::Error;
@@ -15,14 +16,6 @@ use crate::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BitTiming {
-    prescaler: u16,
-    seg1: u16,
-    seg2: u8,
-    sjw: u8,
-}
-
-/// The ranges of a phase's fields.
-struct Limits {
     prescaler: u16,
     seg1: u16,
     seg2: u8,
@@ -41,11 +34,16 @@ const NOMINAL: Limits = Limits {
 const DATA: Limits = Limits { prescaler: 32, seg1: 32, seg2: 16, sjw: 16 };
 
 impl BitTiming {
-    const fn checked(limits: &Limits, prescaler: u16, seg1: u16, seg2: u8, sjw: u8) -> Result<Self, Error> {
-        if prescaler < 1 || prescaler > limits.prescaler || seg1 < 1 || seg1 > limits.seg1 || seg2 < 1 || seg2 > limits.seg2 || sjw < 1 || sjw > limits.sjw || sjw > seg2 {
-            return Err(Error::InvalidTiming);
+    const fn checked(limits: Limits, prescaler: u16, seg1: u16, seg2: u8, sjw: u8) -> Result<Self, Error> {
+        match limits.check(Segments {
+            prescaler,
+            seg1,
+            seg2: seg2 as u16,
+            sjw: sjw as u16,
+        }) {
+            Some(_) => Ok(Self { prescaler, seg1, seg2, sjw }),
+            None => Err(Error::InvalidTiming),
         }
-        Ok(Self { prescaler, seg1, seg2, sjw })
     }
 
     /// Nominal timing from its fields, checked against the controller's ranges:
@@ -56,7 +54,7 @@ impl BitTiming {
     ///
     /// [`Error::InvalidTiming`] when a field is out of range.
     pub const fn nominal(prescaler: u16, seg1: u16, seg2: u8, sjw: u8) -> Result<Self, Error> {
-        Self::checked(&NOMINAL, prescaler, seg1, seg2, sjw)
+        Self::checked(NOMINAL, prescaler, seg1, seg2, sjw)
     }
 
     /// Data-phase timing from its fields: `prescaler` 1 to 32, `seg1` 1 to
@@ -66,32 +64,22 @@ impl BitTiming {
     ///
     /// [`Error::InvalidTiming`] when a field is out of range.
     pub const fn data(prescaler: u16, seg1: u16, seg2: u8, sjw: u8) -> Result<Self, Error> {
-        Self::checked(&DATA, prescaler, seg1, seg2, sjw)
+        Self::checked(DATA, prescaler, seg1, seg2, sjw)
     }
 
-    fn solve(limits: &Limits, clock_hz: u32, bitrate: u32, sample_point: SamplePoint) -> Result<Self, Error> {
-        let target = u32::from(sample_point.per_mille());
-        let most = 1 + u32::from(limits.seg1) + u32::from(limits.seg2);
-        let mut best: Option<(u32, Self)> = None;
-        // More quanta first: the smallest prescaler, as CiA 601-3 advises for
-        // CAN FD, and the finest resynchronisation.
-        for quanta in (4..=most).rev() {
-            let Some(cycles) = bitrate.checked_mul(quanta) else { continue };
-            if cycles == 0 || !clock_hz.is_multiple_of(cycles) {
-                continue;
-            }
-            let Ok(prescaler) = u16::try_from(clock_hz / cycles) else { continue };
-            let sample = (quanta * target + 500) / 1000;
-            let (Ok(seg1), Ok(seg2)) = (u16::try_from(sample.saturating_sub(1)), u8::try_from(quanta.saturating_sub(sample))) else {
-                continue;
-            };
-            let Ok(timing) = Self::checked(limits, prescaler, seg1, seg2, seg2.min(limits.sjw)) else { continue };
-            let error = (sample * 1000 / quanta).abs_diff(target);
-            if best.is_none_or(|(best_error, _)| error < best_error) {
-                best = Some((error, timing));
-            }
-        }
-        best.map(|(_, timing)| timing).ok_or(Error::InvalidTiming)
+    /// can-common's solver within `limits`, whose `seg2` and jump width fit
+    /// a byte.
+    fn solve(limits: Limits, clock_hz: u32, bitrate: u32, sample_point: SamplePoint) -> Result<Self, Error> {
+        let s = limits.solve(clock_hz, bitrate, sample_point.per_mille()).ok_or(Error::InvalidTiming)?;
+        let (Ok(seg2), Ok(sjw)) = (u8::try_from(s.seg2), u8::try_from(s.sjw)) else {
+            return Err(Error::InvalidTiming);
+        };
+        Ok(Self {
+            prescaler: s.prescaler,
+            seg1: s.seg1,
+            seg2,
+            sjw,
+        })
     }
 
     /// The nominal timing for `bitrate` from a `clock_hz` kernel clock whose
@@ -102,7 +90,7 @@ impl BitTiming {
     /// [`Error::InvalidTiming`] when no whole number of quanta divides the
     /// clock into `bitrate`.
     pub fn solve_nominal(clock_hz: u32, bitrate: u32, sample_point: SamplePoint) -> Result<Self, Error> {
-        Self::solve(&NOMINAL, clock_hz, bitrate, sample_point)
+        Self::solve(NOMINAL, clock_hz, bitrate, sample_point)
     }
 
     /// The data-phase timing for `bitrate`, as [`solve_nominal`](Self::solve_nominal).
@@ -111,7 +99,7 @@ impl BitTiming {
     ///
     /// [`Error::InvalidTiming`] as for [`solve_nominal`](Self::solve_nominal).
     pub fn solve_data(clock_hz: u32, bitrate: u32, sample_point: SamplePoint) -> Result<Self, Error> {
-        Self::solve(&DATA, clock_hz, bitrate, sample_point)
+        Self::solve(DATA, clock_hz, bitrate, sample_point)
     }
 
     /// Cycles of the kernel clock per quantum.
