@@ -171,10 +171,21 @@ impl<T: Clone, const N: usize> Inner<T, N> {
         // Into the order they had on the bus, by start of frame. The stamps
         // are 16 bits of bit time, so ordering by difference holds while they
         // span less than 32768 bits (65 ms at 500 kbit/s).
+        //
+        // An insertion sort: there are nine at most, and the slice sort, once
+        // the compiler stops inlining it (at opt-level "z"), takes over a
+        // kilobyte of interrupt stack for its scratch space.
         let happened = &mut happened[..count];
         if let Some(&Some((reference, _))) = happened.first() {
             #[allow(clippy::cast_possible_wrap)] // the difference, as a signed offset
-            happened.sort_unstable_by_key(|h| h.as_ref().map(|&(time, _)| time.wrapping_sub(reference) as i16));
+            let key = |h: &Option<(u16, Happening)>| h.as_ref().map(|&(time, _)| time.wrapping_sub(reference) as i16);
+            for i in 1..happened.len() {
+                let mut j = i;
+                while j > 0 && key(&happened[j - 1]) > key(&happened[j]) {
+                    happened.swap(j - 1, j);
+                    j -= 1;
+                }
+            }
         }
         for (_, happening) in happened.iter_mut().filter_map(Option::take) {
             match happening {
